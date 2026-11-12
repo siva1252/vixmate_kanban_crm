@@ -1,7 +1,7 @@
 import pytest
 from rest_framework import status
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import ApprovedEmail, User
 from apps.accounts.services.auth import create_team_user
@@ -57,8 +57,8 @@ def setup(db):
 
 @pytest.fixture
 def auth_api(api, setup):
-    token = Token.objects.create(user=setup["siva"])
-    api.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+    access = str(RefreshToken.for_user(setup["siva"]).access_token)
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
     return api
 
 

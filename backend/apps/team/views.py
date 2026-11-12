@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework.views import APIView
 
 from apps.team import serializers as ser
@@ -11,6 +12,7 @@ from common.responses import success_response
 class TeamMemberListView(APIView):
     permission_classes = [IsActiveCRMMember]
 
+    @extend_schema(tags=["team"], summary="List team members")
     def get(self, request):
         qs = TeamMember.objects.select_related("user").filter(is_active=True)
         if request.query_params.get("include_inactive") == "true":
@@ -21,6 +23,7 @@ class TeamMemberListView(APIView):
 class TeamMemberDetailView(APIView):
     permission_classes = [IsActiveCRMMember]
 
+    @extend_schema(tags=["team"], summary="Team member detail")
     def get(self, request, member_id):
         member = get_object_or_404(TeamMember.objects.select_related("user"), id=member_id)
         return success_response(ser.TeamMemberSerializer(member).data)
@@ -29,6 +32,11 @@ class TeamMemberDetailView(APIView):
 class TeamAvailabilityUpdateView(APIView):
     permission_classes = [IsActiveCRMMember]
 
+    @extend_schema(
+        tags=["team"],
+        summary="Update availability",
+        request=ser.AvailabilityUpdateSerializer,
+    )
     def patch(self, request, member_id):
         member = get_object_or_404(TeamMember, id=member_id)
         serializer = ser.AvailabilityUpdateSerializer(data=request.data)
@@ -49,6 +57,7 @@ class TeamAvailabilityUpdateView(APIView):
 class TeamAvailabilityHistoryView(APIView):
     permission_classes = [IsActiveCRMMember]
 
+    @extend_schema(tags=["team"], summary="Availability history")
     def get(self, request, member_id):
         history = AvailabilityHistory.objects.filter(team_member_id=member_id).select_related(
             "changed_by"

@@ -26,10 +26,10 @@ export default function LeadsPage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-3 sm:p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl">Leads</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Leads</h1>
           <p className="text-sm text-stone-500">Search and filter mock CRM clients</p>
         </div>
         <Link href="/leads/new" className="inline-flex h-10 items-center rounded-md bg-teal-800 px-4 text-sm font-medium text-white hover:bg-teal-900">Create lead</Link>

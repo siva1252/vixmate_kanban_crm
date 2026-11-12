@@ -7,12 +7,11 @@ from django.core import mail
 from django.utils import timezone
 from freezegun import freeze_time
 from rest_framework import status
-from rest_framework.authtoken.models import Token
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from apps.accounts.models import ApprovedEmail, OTPPurpose, OTPVerification, User
 from apps.accounts.services.auth import create_team_user, forgot_password, verify_otp
-from rest_framework.exceptions import ValidationError
 
 
 @pytest.fixture
@@ -57,8 +56,12 @@ def test_approved_email_login(api, member):
     )
     assert response.status_code == status.HTTP_200_OK
     assert response.data["success"] is True
-    assert "token" in response.data["data"]
-    assert "password" not in response.data["data"]["user"]
+    data = response.data["data"]
+    assert data["token_type"] == "Bearer"
+    assert data["access"]
+    assert data["refresh"]
+    assert data["expires_in"] > 0
+    assert "password" not in data["user"]
 
 
 @pytest.mark.django_db
@@ -96,6 +99,34 @@ def test_deactivated_account_cannot_login(api, member):
         format="json",
     )
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.django_db
+def test_me_with_access_token(api, member):
+    login = api.post(
+        "/api/auth/login/",
+        {"email": member.email, "password": "MemberPass123!"},
+        format="json",
+    )
+    access = login.data["data"]["access"]
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+    me = api.get("/api/auth/me/")
+    assert me.status_code == status.HTTP_200_OK
+    assert me.data["data"]["email"] == member.email
+
+
+@pytest.mark.django_db
+def test_token_refresh(api, member):
+    login = api.post(
+        "/api/auth/login/",
+        {"email": member.email, "password": "MemberPass123!"},
+        format="json",
+    )
+    refresh = login.data["data"]["refresh"]
+    response = api.post("/api/auth/token/refresh/", {"refresh": refresh}, format="json")
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["data"]["access"]
+    assert response.data["data"]["refresh"]
 
 
 @pytest.mark.django_db
@@ -174,7 +205,6 @@ def test_password_reset_flow(api, member):
     assert reset.status_code == status.HTTP_200_OK
     member.refresh_from_db()
     assert member.check_password("NewMemberPass123!")
-    assert not Token.objects.filter(user=member).exists()
 
 
 @pytest.mark.django_db
@@ -184,8 +214,11 @@ def test_logout(api, member):
         {"email": member.email, "password": "MemberPass123!"},
         format="json",
     )
-    token = login.data["data"]["token"]
-    api.credentials(HTTP_AUTHORIZATION=f"Token {token}")
-    response = api.post("/api/auth/logout/")
+    access = login.data["data"]["access"]
+    refresh = login.data["data"]["refresh"]
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+    response = api.post("/api/auth/logout/", {"refresh": refresh}, format="json")
     assert response.status_code == status.HTTP_200_OK
-    assert not Token.objects.filter(user=member).exists()
+    # Blacklisted refresh cannot be reused
+    again = api.post("/api/auth/token/refresh/", {"refresh": refresh}, format="json")
+    assert again.status_code == status.HTTP_400_BAD_REQUEST

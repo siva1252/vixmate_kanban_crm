@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-from rest_framework import status
+from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.views import APIView
 
@@ -13,42 +13,103 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(
+        tags=["auth"],
+        summary="Login",
+        description=(
+            "Returns JWT `access` + `refresh`. "
+            "Authorize with the **access** token. Use `/api/auth/token/refresh/` when it expires."
+        ),
+        request=ser.LoginSerializer,
+        examples=[
+            OpenApiExample(
+                "Team lead",
+                value={
+                    "email": "siva@viximate.com",
+                    "password": "Viximate@high5",
+                },
+                request_only=True,
+            )
+        ],
+        responses={200: OpenApiResponse(description="Login successful")},
+    )
     def post(self, request):
         serializer = ser.LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user, token = auth_services.login_user(
+        user, tokens = auth_services.login_user(
             email=serializer.validated_data["email"],
             password=serializer.validated_data["password"],
             request=request,
         )
+        user = User.objects.select_related("team_member").get(pk=user.pk)
         return success_response(
             {
-                "token": token.key,
+                **tokens,
                 "user": ser.UserSerializer(user).data,
             },
             message="Login successful",
         )
 
 
+class TokenRefreshView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @extend_schema(
+        tags=["auth"],
+        summary="Refresh access token",
+        description="Exchange a valid refresh token for a new access token (and rotated refresh).",
+        request=ser.TokenRefreshSerializer,
+        responses={200: OpenApiResponse(description="Token refreshed")},
+    )
+    def post(self, request):
+        serializer = ser.TokenRefreshSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        tokens = auth_services.refresh_tokens(refresh=serializer.validated_data["refresh"])
+        return success_response(tokens, message="Token refreshed")
+
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["auth"],
+        summary="Logout",
+        description="Blacklists the refresh token. Send access token in Authorization header.",
+        request=ser.LogoutSerializer,
+        responses={200: OpenApiResponse(description="Logged out")},
+    )
     def post(self, request):
-        auth_services.logout_user(user=request.user, request=request)
+        serializer = ser.LogoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        auth_services.logout_user(
+            user=request.user,
+            refresh=serializer.validated_data["refresh"],
+            request=request,
+        )
         return success_response(message="Logged out")
 
 
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(tags=["auth"], summary="Current user", responses={200: ser.UserSerializer})
     def get(self, request):
-        return success_response(ser.UserSerializer(request.user).data)
+        user = (
+            type(request.user)
+            .objects.select_related("team_member")
+            .filter(pk=request.user.pk)
+            .first()
+            or request.user
+        )
+        return success_response(ser.UserSerializer(user).data)
 
 
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(tags=["auth"], summary="Forgot password", request=ser.EmailSerializer)
     def post(self, request):
         serializer = ser.EmailSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -63,6 +124,7 @@ class OTPVerifyView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(tags=["auth"], summary="Verify OTP", request=ser.OTPVerifySerializer)
     def post(self, request):
         serializer = ser.OTPVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -79,6 +141,7 @@ class OTPResendView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(tags=["auth"], summary="Resend OTP", request=ser.OTPResendSerializer)
     def post(self, request):
         serializer = ser.OTPResendSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -94,6 +157,7 @@ class PasswordResetView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(tags=["auth"], summary="Reset password", request=ser.PasswordResetSerializer)
     def post(self, request):
         serializer = ser.PasswordResetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -109,6 +173,7 @@ class PasswordResetView(APIView):
 class PasswordChangeRequestView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(tags=["auth"], summary="Request password change OTP", request=None)
     def post(self, request):
         message = auth_services.change_password_request(user=request.user, request=request)
         return success_response(message=message)
@@ -117,6 +182,7 @@ class PasswordChangeRequestView(APIView):
 class PasswordChangeConfirmView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(tags=["auth"], summary="Confirm password change", request=ser.PasswordChangeConfirmSerializer)
     def post(self, request):
         serializer = ser.PasswordChangeConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -130,27 +196,15 @@ class PasswordChangeConfirmView(APIView):
         return success_response(message="Password changed successfully.")
 
 
-class CreateUserView(APIView):
-    permission_classes = [IsAdminUser]
-
-    def post(self, request):
-        serializer = ser.CreateUserSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = auth_services.create_team_user(
-            actor=request.user,
-            request=request,
-            **serializer.validated_data,
-        )
-        return success_response(
-            ser.UserSerializer(user).data,
-            message="Team member created",
-            status_code=status.HTTP_201_CREATED,
-        )
-
-
 class ActivateUserView(APIView):
     permission_classes = [IsAdminUser]
 
+    @extend_schema(
+        tags=["auth"],
+        summary="Activate user",
+        description="Staff-only. Team users are created manually in Admin/DB; this only flips active.",
+        request=None,
+    )
     def patch(self, request, user_id):
         user = get_object_or_404(User, id=user_id)
         user = auth_services.activate_user(actor=request.user, user=user, request=request)
@@ -160,6 +214,12 @@ class ActivateUserView(APIView):
 class DeactivateUserView(APIView):
     permission_classes = [IsAdminUser]
 
+    @extend_schema(
+        tags=["auth"],
+        summary="Deactivate user",
+        description="Staff-only. Disables CRM access for a manually provisioned team member.",
+        request=None,
+    )
     def patch(self, request, user_id):
         user = get_object_or_404(User, id=user_id)
         user = auth_services.deactivate_user(actor=request.user, user=user, request=request)

@@ -16,6 +16,7 @@ urlpatterns = [
     ),
     path("api/auth/", include("apps.accounts.urls")),
     path("api/team/", include("apps.team.urls")),
+    path("api/lead-source/", include("apps.lead_source.urls")),
     path("api/clients/", include("apps.crm.urls_clients")),
     path("api/kanban/", include("apps.crm.urls_kanban")),
     path("api/assignments/", include("apps.assignments.urls")),

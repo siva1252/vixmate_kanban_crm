@@ -17,6 +17,11 @@ const sans = IBM_Plex_Sans({
 export const metadata: Metadata = {
   title: "Viximate CRM (Mock Mode)",
   description: "Independent mock frontend for Viximate CRM — not connected to Django.",
+  icons: {
+    icon: [{ url: "/brand/viximate-logo.png", type: "image/png" }],
+    apple: [{ url: "/brand/viximate-logo.png" }],
+    shortcut: ["/brand/viximate-logo.png"],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

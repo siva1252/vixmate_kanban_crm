@@ -10,8 +10,9 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 class LoginFailed(APIException):
@@ -130,8 +131,20 @@ def create_team_user(
     return user
 
 
+def _issue_tokens(user: User) -> dict:
+    refresh = RefreshToken.for_user(user)
+    access = refresh.access_token
+    access_lifetime = settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"]
+    return {
+        "access": str(access),
+        "refresh": str(refresh),
+        "token_type": "Bearer",
+        "expires_in": int(access_lifetime.total_seconds()),
+    }
+
+
 @transaction.atomic
-def login_user(*, email: str, password: str, request=None) -> tuple[User, Token]:
+def login_user(*, email: str, password: str, request=None) -> tuple[User, dict]:
     email = _normalize_email(email)
     ip = get_client_ip(request)
 
@@ -185,7 +198,7 @@ def login_user(*, email: str, password: str, request=None) -> tuple[User, Token]
     user.save(
         update_fields=["failed_login_attempts", "locked_until", "last_login_ip", "updated_at"]
     )
-    token, _ = Token.objects.get_or_create(user=user)
+    tokens = _issue_tokens(user)
     write_audit_log(
         actor=user,
         action="login",
@@ -194,12 +207,44 @@ def login_user(*, email: str, password: str, request=None) -> tuple[User, Token]
         description="User logged in",
         request=request,
     )
-    return user, token
+    return user, tokens
+
+
+def refresh_tokens(*, refresh: str) -> dict:
+    try:
+        token = RefreshToken(refresh)
+    except TokenError as exc:
+        raise ValidationError({"refresh": "Invalid or expired refresh token."}) from exc
+
+    # ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION are handled by simplejwt settings
+    # when using the built-in serializer; mirror that behavior here.
+    data = {
+        "access": str(token.access_token),
+        "token_type": "Bearer",
+        "expires_in": int(settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds()),
+    }
+    if settings.SIMPLE_JWT.get("ROTATE_REFRESH_TOKENS"):
+        if settings.SIMPLE_JWT.get("BLACKLIST_AFTER_ROTATION"):
+            try:
+                token.blacklist()
+            except AttributeError:
+                pass
+        token.set_jti()
+        token.set_exp()
+        token.set_iat()
+        data["refresh"] = str(token)
+    else:
+        data["refresh"] = str(token)
+    return data
 
 
 @transaction.atomic
-def logout_user(*, user: User, request=None) -> None:
-    Token.objects.filter(user=user).delete()
+def logout_user(*, user: User, refresh: str, request=None) -> None:
+    try:
+        token = RefreshToken(refresh)
+        token.blacklist()
+    except TokenError as exc:
+        raise ValidationError({"refresh": "Invalid or expired refresh token."}) from exc
     write_audit_log(
         actor=user,
         action="logout",
@@ -350,7 +395,6 @@ def reset_password(
     user.failed_login_attempts = 0
     user.locked_until = None
     user.save(update_fields=["password", "failed_login_attempts", "locked_until", "updated_at"])
-    Token.objects.filter(user=user).delete()
     write_audit_log(
         actor=user,
         action="password_reset",
@@ -392,8 +436,6 @@ def change_password_confirm(
     otp.save(update_fields=["is_used", "used_at"])
     user.set_password(new_password)
     user.save(update_fields=["password", "updated_at"])
-    Token.objects.filter(user=user).delete()
-    Token.objects.create(user=user)
     write_audit_log(
         actor=user,
         action="password_changed",
@@ -432,7 +474,6 @@ def deactivate_user(*, actor: User, user: User, request=None) -> User:
         raise ValidationError({"user": "You cannot deactivate your own account."})
     user.is_active = False
     user.save(update_fields=["is_active", "updated_at"])
-    Token.objects.filter(user=user).delete()
     if hasattr(user, "team_member"):
         user.team_member.is_active = False
         user.team_member.save(update_fields=["is_active", "updated_at"])

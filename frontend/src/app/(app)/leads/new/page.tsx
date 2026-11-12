@@ -37,10 +37,18 @@ const schema = z
     const source = LEAD_SOURCES.find((s) => s.id === values.leadSourceId);
     const service = SERVICES.find((s) => s.id === values.serviceId);
     if (source?.allowsOtherText && !values.leadSourceOther?.trim()) {
-      ctx.addIssue({ code: "custom", path: ["leadSourceOther"], message: "Specify the source" });
+      ctx.addIssue({
+        code: "custom",
+        path: ["leadSourceOther"],
+        message: "Please briefly explain this other lead source",
+      });
     }
     if (service?.allowsOtherText && !values.serviceOther?.trim()) {
-      ctx.addIssue({ code: "custom", path: ["serviceOther"], message: "Specify the service" });
+      ctx.addIssue({
+        code: "custom",
+        path: ["serviceOther"],
+        message: "Please briefly explain this other service",
+      });
     }
   });
 
@@ -78,7 +86,7 @@ export default function CreateLeadPage() {
   const postCallFields = CUSTOM_FIELDS.filter((f) => f.showOnPostFirstCall);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto max-w-3xl space-y-4 p-3 sm:p-4 md:p-6">
       <h1 className="font-display text-3xl">Create lead</h1>
       <form
         className="space-y-4 rounded-xl border bg-white/80 p-5 dark:border-stone-800 dark:bg-stone-950/60"
@@ -142,9 +150,19 @@ export default function CreateLeadPage() {
             </select>
           </div>
           {sourceAllowsOther ? (
-            <div>
-              <Label>Specify source</Label>
-              <Input {...register("leadSourceOther")} />
+            <div className="md:col-span-2">
+              <Label>Please describe this other lead source</Label>
+              <Input
+                placeholder="Briefly explain where this lead came from (e.g. trade show, partner intro)"
+                {...register("leadSourceOther")}
+              />
+              {errors.leadSourceOther ? (
+                <p className="text-xs text-rose-700">{errors.leadSourceOther.message}</p>
+              ) : (
+                <p className="mt-1 text-xs text-stone-500">
+                  Since you selected Other, tell the team what this source is.
+                </p>
+              )}
             </div>
           ) : null}
           <div>
@@ -158,9 +176,19 @@ export default function CreateLeadPage() {
             </select>
           </div>
           {serviceAllowsOther ? (
-            <div>
-              <Label>Specify service</Label>
-              <Input {...register("serviceOther")} />
+            <div className="md:col-span-2">
+              <Label>Please describe this other service</Label>
+              <Input
+                placeholder="Briefly explain what the client needs (e.g. CRM setup, custom integration)"
+                {...register("serviceOther")}
+              />
+              {errors.serviceOther ? (
+                <p className="text-xs text-rose-700">{errors.serviceOther.message}</p>
+              ) : (
+                <p className="mt-1 text-xs text-stone-500">
+                  Since you selected Other, describe the service in a short note.
+                </p>
+              )}
             </div>
           ) : null}
           <div>

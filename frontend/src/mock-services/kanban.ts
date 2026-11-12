@@ -1,10 +1,10 @@
-import { STAGES } from "@/mock-data/store";
+import { sortedStages, STAGES } from "@/mock-data/store";
 import { listClients, moveClientStage } from "@/mock-services/clients";
 import type { Client, LeadStage } from "@/types";
 
 export function getKanbanBoard(filters?: Parameters<typeof listClients>[0]) {
   const cards = listClients(filters);
-  return STAGES.map((stage) => ({
+  return sortedStages().map((stage) => ({
     stage,
     cards: cards.filter((c) => c.stageId === stage.id),
   }));

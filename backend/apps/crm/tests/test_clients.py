@@ -1,7 +1,7 @@
 import pytest
 from rest_framework import status
-from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import ApprovedEmail, User
 from apps.accounts.services.auth import create_team_user
@@ -32,8 +32,8 @@ def member(db):
 
 @pytest.fixture
 def auth_api(api, member):
-    token = Token.objects.create(user=member)
-    api.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+    access = str(RefreshToken.for_user(member).access_token)
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
     return api
 
 
