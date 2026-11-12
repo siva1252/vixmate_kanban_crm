@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework.views import APIView
 
 from apps.configuration import serializers as ser
@@ -9,6 +10,7 @@ from common.responses import success_response
 class ConfigurationBundleView(APIView):
     permission_classes = [IsActiveCRMMember]
 
+    @extend_schema(tags=["configuration"], summary="Configuration bundle (sources, services, industries)")
     def get(self, request):
         return success_response(
             {

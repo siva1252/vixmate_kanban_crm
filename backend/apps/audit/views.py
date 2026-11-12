@@ -1,4 +1,5 @@
 from django.db.models import Q
+from drf_spectacular.utils import extend_schema
 from rest_framework.views import APIView
 
 from apps.audit.models import AuditLog
@@ -11,6 +12,7 @@ from common.responses import success_response
 class ActivityLogListView(APIView):
     permission_classes = [IsActiveCRMMember]
 
+    @extend_schema(tags=["activity"], summary="Active / audit logs")
     def get(self, request):
         qs = AuditLog.objects.select_related("actor", "client").all()
         if actor := request.query_params.get("team_member"):
@@ -19,6 +21,16 @@ class ActivityLogListView(APIView):
             qs = qs.filter(client_id=client)
         if action := request.query_params.get("action"):
             qs = qs.filter(action=action)
+        if entity_type := request.query_params.get("entity_type"):
+            qs = qs.filter(entity_type=entity_type)
+        if search := request.query_params.get("search"):
+            qs = qs.filter(
+                Q(action__icontains=search)
+                | Q(entity_type__icontains=search)
+                | Q(description__icontains=search)
+                | Q(reason__icontains=search)
+                | Q(client__client_name__icontains=search)
+            )
         if date_from := request.query_params.get("date_from"):
             qs = qs.filter(timestamp__date__gte=date_from)
         if date_to := request.query_params.get("date_to"):

@@ -8,12 +8,37 @@ from apps.team.models import TeamMember
 class LeadStageSerializer(serializers.ModelSerializer):
     class Meta:
         model = LeadStage
-        fields = ("id", "name", "slug", "display_order", "is_terminal", "is_active")
+        fields = ("id", "name", "slug", "display_order", "is_terminal", "is_active", "color")
+
+
+class LeadStageCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=64)
+    color = serializers.CharField(max_length=32, required=False, default="#3b82f6")
+    is_terminal = serializers.BooleanField(required=False, default=False)
+
+
+class LeadStageUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=64, required=False)
+    color = serializers.CharField(max_length=32, required=False)
+    is_terminal = serializers.BooleanField(required=False)
+    is_active = serializers.BooleanField(required=False)
+
+
+class LeadStageReorderSerializer(serializers.Serializer):
+    ordered_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+    )
+
+
+class LeadStageDeleteSerializer(serializers.Serializer):
+    reason = serializers.CharField()
 
 
 class ClientListSerializer(serializers.ModelSerializer):
     stage = LeadStageSerializer(read_only=True)
     lead_source_name = serializers.CharField(source="lead_source.name", read_only=True)
+    lead_source_people = serializers.SerializerMethodField()
     service_name = serializers.CharField(source="service.name", read_only=True)
     assignees = serializers.SerializerMethodField()
 
@@ -28,6 +53,7 @@ class ClientListSerializer(serializers.ModelSerializer):
             "lead_source",
             "lead_source_name",
             "lead_source_other",
+            "lead_source_people",
             "service",
             "service_name",
             "service_other",
@@ -37,18 +63,54 @@ class ClientListSerializer(serializers.ModelSerializer):
             "assignees",
         )
 
+    def get_lead_source_people(self, obj):
+        """Read-only: multiple Lead Source people assigned via Lead Source tab."""
+        rows = getattr(obj, "prefetched_lead_source_people", None)
+        if rows is None:
+            rows = obj.lead_source_attributions.filter(is_active=True).select_related("person")
+        return [
+            {
+                "attribution_id": str(a.id),
+                "id": str(a.person_id),
+                "display_name": a.person.display_name,
+                "role_label": a.person.role_label,
+                "note": a.note,
+            }
+            for a in rows
+        ]
+
     def get_assignees(self, obj):
         assignments = getattr(obj, "prefetched_assignments", None)
         if assignments is None:
             assignments = obj.assignments.filter(is_active=True).select_related("team_member")
-        return [
+        rows = [
             {
                 "responsibility": a.responsibility_type.name,
                 "member": a.team_member.display_name,
                 "member_id": str(a.team_member_id),
+                "source": "assignment",
             }
             for a in assignments
         ]
+        working = getattr(obj, "prefetched_working", None)
+        if working is None:
+            working = obj.working_assignments.filter(is_active=True).select_related("team_member")
+        seen = {r["member_id"] for r in rows}
+        for w in working:
+            mid = str(w.team_member_id)
+            if mid in seen:
+                continue
+            rows.append(
+                {
+                    "responsibility": "Working",
+                    "member": w.team_member.display_name,
+                    "member_id": mid,
+                    "work_note": w.work_note,
+                    "source": "working",
+                }
+            )
+            seen.add(mid)
+        return rows
 
 
 class ClientDetailSerializer(ClientListSerializer):
@@ -106,7 +168,7 @@ class ClientCreateSerializer(serializers.Serializer):
 
 
 class ClientUpdateSerializer(ClientCreateSerializer):
-    reason = serializers.CharField(required=False, allow_blank=True)
+    reason = serializers.CharField(required=True, min_length=3)
     company_name = serializers.CharField(required=False, allow_blank=True)
     website = serializers.URLField(required=False, allow_blank=True)
     company_address = serializers.CharField(required=False, allow_blank=True)

@@ -6,11 +6,13 @@ from apps.team.models import AvailabilityHistory, AvailabilityStatus, TeamMember
 class TeamMemberSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", read_only=True)
     full_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_id = serializers.UUIDField(read_only=True)
 
     class Meta:
         model = TeamMember
         fields = (
             "id",
+            "user_id",
             "display_name",
             "job_title",
             "is_active",

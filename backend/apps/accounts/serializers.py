@@ -5,6 +5,10 @@ from apps.accounts.models import OTPPurpose, User
 
 
 class UserSerializer(serializers.ModelSerializer):
+    team_member_id = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
+    job_title = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = (
@@ -16,13 +20,38 @@ class UserSerializer(serializers.ModelSerializer):
             "is_staff",
             "date_joined",
             "last_login",
+            "team_member_id",
+            "display_name",
+            "job_title",
         )
         read_only_fields = fields
+
+    def get_team_member_id(self, obj):
+        member = getattr(obj, "team_member", None)
+        return str(member.id) if member else None
+
+    def get_display_name(self, obj):
+        member = getattr(obj, "team_member", None)
+        if member and member.display_name:
+            return member.display_name
+        return obj.full_name
+
+    def get_job_title(self, obj):
+        member = getattr(obj, "team_member", None)
+        return member.job_title if member else ""
 
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class TokenRefreshSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
 
 
 class EmailSerializer(serializers.Serializer):

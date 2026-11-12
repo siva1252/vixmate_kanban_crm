@@ -45,10 +45,12 @@ cd backend
 pip install -r requirements\dev.txt
 # .env uses POSTGRES_PORT=5433
 python manage.py migrate
-python manage.py seed_configuration
-python manage.py createsuperuser
+python manage.py seed_all
 python manage.py runserver
 ```
+
+`seed_all` = configuration + demo users + demo leads, and prints a ready Swagger `POST /api/clients/` body with real UUIDs.
+
 
 - Swagger: http://127.0.0.1:8000/api/docs/
 - Admin: http://127.0.0.1:8000/admin/

@@ -12,13 +12,6 @@ from apps.crm.models import Client, LeadStage, LeadStageHistory
 from common.validators import require_reason
 
 
-REASON_REQUIRED_FIELDS = {
-    "estimated_deal_value": "Pricing/deal-value change requires a reason.",
-    "project_deadline": "Project deadline change requires a reason.",
-    "agreed_project_scope": "Agreed project scope change requires a reason.",
-}
-
-
 def _validate_other_fields(*, source, source_other, service, service_other) -> None:
     if source.allows_other_text and not (source_other or "").strip():
         raise ValidationError({"lead_source_other": "Please specify the lead source."})
@@ -147,11 +140,8 @@ def create_client(*, actor, data: dict, request=None) -> Client:
 @transaction.atomic
 def update_client(*, actor, client: Client, data: dict, reason: str = "", request=None) -> Client:
     old = _snapshot(client)
-
-    for field, message in REASON_REQUIRED_FIELDS.items():
-        if field in data and data[field] != getattr(client, field):
-            require_reason(reason or data.get("reason"))
-            break
+    # Every lead detail edit requires a reason (matches frontend Edit → reason → Save flow).
+    cleaned_reason = require_reason(reason or data.get("reason"))
 
     source = data.get("lead_source", client.lead_source)
     service = data.get("service", client.service)
@@ -206,7 +196,7 @@ def update_client(*, actor, client: Client, data: dict, reason: str = "", reques
         client=client,
         old_values=old,
         new_values=_snapshot(client),
-        reason=reason or data.get("reason", ""),
+        reason=cleaned_reason,
         description=f"Updated client {client.client_name}",
         request=request,
     )

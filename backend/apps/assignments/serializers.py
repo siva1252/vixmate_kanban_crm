@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.assignments.models import AssignmentHistory, LeadAssignment, ResponsibilityType
+from apps.assignments.models import AssignmentHistory, LeadAssignment, LeadWorking, ResponsibilityType
 from apps.crm.models import Client
 from apps.team.models import TeamMember
 
@@ -62,6 +62,64 @@ class ReassignSerializer(serializers.Serializer):
         queryset=TeamMember.objects.filter(is_active=True)
     )
     reason = serializers.CharField()
+
+
+class LeadWorkingSerializer(serializers.ModelSerializer):
+    member_name = serializers.CharField(source="team_member.display_name", read_only=True)
+    job_title = serializers.CharField(source="team_member.job_title", read_only=True)
+    assigned_by_name = serializers.SerializerMethodField()
+    updated_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LeadWorking
+        fields = (
+            "id",
+            "client",
+            "team_member",
+            "member_name",
+            "job_title",
+            "work_note",
+            "assigned_by",
+            "assigned_by_name",
+            "updated_by",
+            "updated_by_name",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_assigned_by_name(self, obj):
+        if not obj.assigned_by_id:
+            return None
+        member = getattr(obj.assigned_by, "team_member", None)
+        return member.display_name if member else obj.assigned_by.get_full_name() or obj.assigned_by.email
+
+    def get_updated_by_name(self, obj):
+        if not obj.updated_by_id:
+            return None
+        member = getattr(obj.updated_by, "team_member", None)
+        return member.display_name if member else obj.updated_by.get_full_name() or obj.updated_by.email
+
+
+class WorkingAssignSerializer(serializers.Serializer):
+    client = serializers.PrimaryKeyRelatedField(queryset=Client.objects.all())
+    team_member = serializers.PrimaryKeyRelatedField(
+        queryset=TeamMember.objects.filter(is_active=True)
+    )
+    work_note = serializers.CharField()
+
+
+class WorkingUpdateSerializer(serializers.Serializer):
+    team_member = serializers.PrimaryKeyRelatedField(
+        queryset=TeamMember.objects.filter(is_active=True),
+        required=False,
+    )
+    work_note = serializers.CharField(required=False)
+    reason = serializers.CharField(min_length=3)
+
+
+class WorkingRemoveSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=3)
 
 
 class AssignmentHistorySerializer(serializers.ModelSerializer):

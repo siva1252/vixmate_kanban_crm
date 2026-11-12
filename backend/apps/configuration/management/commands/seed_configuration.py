@@ -12,14 +12,15 @@ from apps.crm.models import LeadStage
 
 
 STAGES = [
-    ("New Lead", "new-lead", 1, False),
-    ("Call Back", "call-back", 2, False),
-    ("In Progress", "in-progress", 3, False),
-    ("Qualified", "qualified", 4, False),
-    ("Meeting", "meeting", 5, False),
-    ("Negotiation", "negotiation", 6, False),
-    ("Loss", "loss", 7, True),
-    ("Won", "won", 8, True),
+    # name, slug, order, terminal, color
+    ("New Lead", "new-lead", 1, False, "#3b82f6"),
+    ("Call Back", "call-back", 2, False, "#f97316"),
+    ("In Progress", "in-progress", 3, False, "#14b8a6"),
+    ("Qualified", "qualified", 4, False, "#22c55e"),
+    ("Meeting", "meeting", 5, False, "#a855f7"),
+    ("Negotiation", "negotiation", 6, False, "#eab308"),
+    ("Loss", "loss", 7, True, "#ef4444"),
+    ("Won", "won", 8, True, "#0f766e"),
 ]
 
 SOURCES = [
@@ -70,7 +71,7 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        for name, slug, order, terminal in STAGES:
+        for name, slug, order, terminal, color in STAGES:
             LeadStage.objects.update_or_create(
                 slug=slug,
                 defaults={
@@ -78,6 +79,7 @@ class Command(BaseCommand):
                     "display_order": order,
                     "is_terminal": terminal,
                     "is_active": True,
+                    "color": color,
                 },
             )
 
@@ -126,3 +128,15 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(self.style.SUCCESS("Configuration seeded successfully."))
+        self.stdout.write("Lead sources:")
+        for row in LeadSource.objects.filter(is_active=True).order_by("display_order"):
+            self.stdout.write(f"  {row.name}: {row.id}")
+        self.stdout.write("Services:")
+        for row in Service.objects.filter(is_active=True).order_by("display_order"):
+            self.stdout.write(f"  {row.name}: {row.id}")
+        self.stdout.write("Industries:")
+        for row in Industry.objects.filter(is_active=True).order_by("display_order"):
+            self.stdout.write(f"  {row.name}: {row.id}")
+        self.stdout.write("Stages:")
+        for row in LeadStage.objects.filter(is_active=True).order_by("display_order"):
+            self.stdout.write(f"  {row.name}: {row.id}")

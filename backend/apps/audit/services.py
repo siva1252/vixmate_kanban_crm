@@ -23,6 +23,8 @@ SENSITIVE_KEYS = {
     "otp",
     "code",
     "token",
+    "access",
+    "refresh",
     "secret",
     "authorization",
     "code_hash",

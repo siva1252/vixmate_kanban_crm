@@ -68,6 +68,54 @@ class LeadAssignment(TimeStampedModel):
         return f"{self.client} / {self.responsibility_type}: {self.team_member}"
 
 
+class LeadWorking(TimeStampedModel):
+    """Who is working on a lead and what they are working on (work note)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey(
+        "crm.Client",
+        on_delete=models.CASCADE,
+        related_name="working_assignments",
+    )
+    team_member = models.ForeignKey(
+        "team.TeamMember",
+        on_delete=models.CASCADE,
+        related_name="working_on_leads",
+    )
+    work_note = models.TextField(help_text="What this member is working on for the lead.")
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="working_assignments_made",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="working_assignments_updated",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["client", "team_member"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_working_per_client_member",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["client", "is_active"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.team_member} on {self.client}"
+
+
 class AssignmentHistory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(

@@ -12,7 +12,7 @@ from common.models import SoftDeleteModel, TimeStampedModel
 
 
 class LeadStage(TimeStampedModel):
-    """Kanban stages in fixed business order."""
+    """Kanban board columns / stages (admin-managed)."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=64, unique=True)
@@ -22,6 +22,12 @@ class LeadStage(TimeStampedModel):
     is_terminal = models.BooleanField(
         default=False,
         help_text="True for Won and Loss stages.",
+    )
+    color = models.CharField(
+        max_length=32,
+        blank=True,
+        default="#3b82f6",
+        help_text="Hex color for board column accent.",
     )
 
     class Meta:
@@ -47,6 +53,7 @@ class Client(TimeStampedModel, SoftDeleteModel):
         related_name="clients",
     )
     lead_source_other = models.CharField(max_length=255, blank=True, default="")
+    # External Lead Source people (many per lead) live in lead_source.LeadSourceAttribution
     service = models.ForeignKey(
         "configuration.Service",
         on_delete=models.PROTECT,

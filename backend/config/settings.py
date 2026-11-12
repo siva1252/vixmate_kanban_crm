@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -41,13 +42,15 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party
     "rest_framework",
-    "rest_framework.authtoken",
+    "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "drf_spectacular",
     "corsheaders",
     # Local apps
     "apps.accounts",
     "apps.team",
+    "apps.lead_source",
     "apps.crm",
     "apps.contacts",
     "apps.assignments",
@@ -142,7 +145,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
@@ -155,18 +158,76 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "common.pagination.StandardResultsSetPagination",
     "PAGE_SIZE": 25,
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_SCHEMA_CLASS": "common.schema.ViximateAutoSchema",
     "EXCEPTION_HANDLER": "common.exceptions.custom_exception_handler",
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(
+        minutes=int(env("JWT_ACCESS_MINUTES", "60") or "60")
+    ),
+    "REFRESH_TOKEN_LIFETIME": timedelta(
+        days=int(env("JWT_REFRESH_DAYS", "7") or "7")
+    ),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+    "TOKEN_TYPE_CLAIM": "token_type",
+    "JTI_CLAIM": "jti",
 }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Viximate CRM API",
     "DESCRIPTION": (
-        "Internal CRM and Kanban Management System API. "
-        "Independent of the Next.js frontend. Test via Swagger or Postman."
+        "Internal CRM + Kanban API aligned with the Viximate frontend flows.\n\n"
+        "**Auth:** `POST /api/auth/login/` returns JWT `access` + `refresh`. "
+        "Authorize with the **access** token only. Use `POST /api/auth/token/refresh/` "
+        "when access expires.\n\n"
+        "**Core demo path:** login → list config → create lead → move stage → "
+        "assign working → edit lead (with reason) → list activity logs.\n\n"
+        "See `docs/API.md` for full request/response walkthrough of one lead + one team member."
     ),
-    "VERSION": "1.0.0",
+    "VERSION": "1.2.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "common.spectacular.inject_seeded_client_example",
+    ],
+    "SECURITY": [{"bearerAuth": []}],
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": "Paste the JWT **access** token from login (no Bearer prefix).",
+            }
+        }
+    },
+    "TAGS": [
+        {"name": "auth", "description": "Login, logout, password, OTP"},
+        {"name": "team", "description": "Team members"},
+        {
+            "name": "lead-source",
+            "description": "External Lead Source people (no login) + their lead stats",
+        },
+        {"name": "configuration", "description": "Channel lead sources, services, industries"},
+        {"name": "clients", "description": "Leads / clients CRUD"},
+        {"name": "kanban", "description": "Board, stage/column management"},
+        {"name": "assignments", "description": "Responsibility + Working assignments"},
+        {"name": "comments", "description": "Lead comments"},
+        {"name": "followups", "description": "Follow-ups"},
+        {"name": "attachments", "description": "Lead documents"},
+        {"name": "activity", "description": "Global audit / active logs"},
+        {"name": "dashboard", "description": "Dashboard metrics"},
+    ],
 }
 
 CORS_ALLOWED_ORIGINS = env_list(

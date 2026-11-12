@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path("login/", views.LoginView.as_view(), name="auth-login"),
+    path("token/refresh/", views.TokenRefreshView.as_view(), name="auth-token-refresh"),
     path("logout/", views.LogoutView.as_view(), name="auth-logout"),
     path("me/", views.MeView.as_view(), name="auth-me"),
     path("forgot-password/", views.ForgotPasswordView.as_view(), name="auth-forgot-password"),
@@ -20,7 +21,7 @@ urlpatterns = [
         views.PasswordChangeConfirmView.as_view(),
         name="auth-password-change-confirm",
     ),
-    path("users/", views.CreateUserView.as_view(), name="auth-users-create"),
+    # Team users are created manually (Admin / seed_demo_users), not via public API.
     path(
         "users/<uuid:user_id>/activate/",
         views.ActivateUserView.as_view(),

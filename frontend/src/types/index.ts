@@ -1,12 +1,4 @@
-export type LeadStageSlug =
-  | "new-lead"
-  | "call-back"
-  | "in-progress"
-  | "qualified"
-  | "meeting"
-  | "negotiation"
-  | "loss"
-  | "won";
+export type LeadStageSlug = string;
 
 export type AvailabilityStatus = "available" | "busy" | "on_leave";
 export type TaskStatus = "pending" | "in_progress" | "blocked" | "completed";
@@ -29,11 +21,36 @@ export interface TeamMember {
   isActive: boolean;
 }
 
+/** Channel source (LinkedIn, Google, …) from configuration */
 export interface LeadSource {
   id: string;
   name: string;
   slug: string;
   allowsOtherText: boolean;
+}
+
+/**
+ * External Lead Source person — no CRM login.
+ * UI tab: Lead Source. Distinct from channel LeadSource above.
+ * Multiple people can be linked to one lead via LeadSourceLink.
+ */
+export interface LeadSourcePerson {
+  id: string;
+  displayName: string;
+  phone?: string;
+  email?: string;
+  roleLabel?: string;
+  notes?: string;
+  isActive: boolean;
+}
+
+/** Many Lead Source people ↔ one lead */
+export interface LeadSourceLink {
+  id: string;
+  clientId: string;
+  personId: string;
+  note?: string;
+  isActive: boolean;
 }
 
 export interface ServiceOption {
@@ -49,6 +66,8 @@ export interface LeadStage {
   slug: LeadStageSlug;
   displayOrder: number;
   isTerminal: boolean;
+  /** Column accent color for board UI */
+  color?: string;
 }
 
 export interface ResponsibilityType {
@@ -63,6 +82,19 @@ export interface LeadAssignment {
   clientId: string;
   responsibilityTypeId: string;
   teamMemberId: string;
+  isActive: boolean;
+}
+
+/** Who is working on a lead and what they are working on (note only). */
+export interface LeadWorking {
+  id: string;
+  clientId: string;
+  teamMemberId: string;
+  workNote: string;
+  assignedById: string;
+  assignedAt: string;
+  updatedById?: string;
+  updatedAt: string;
   isActive: boolean;
 }
 
@@ -143,14 +175,32 @@ export interface FollowUpRecord {
   status: "pending" | "completed" | "skipped";
 }
 
+export type AttachmentDocumentType =
+  | "proposal"
+  | "quotation"
+  | "contract"
+  | "nda"
+  | "sow"
+  | "requirement"
+  | "brd"
+  | "invoice"
+  | "client_brief"
+  | "other";
+
 export interface AttachmentRecord {
   id: string;
   clientId: string;
   originalFilename: string;
+  documentType: AttachmentDocumentType;
+  documentTypeOther?: string;
+  title: string;
+  description?: string;
   fileType: string;
   fileSize: number;
   uploadedById: string;
   uploadedAt: string;
+  /** Mock file payload so Open/Download can work locally */
+  fileDataUrl?: string;
 }
 
 export interface ActivityRecord {
