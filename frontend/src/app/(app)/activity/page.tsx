@@ -11,6 +11,7 @@ import {
   formatChangeSummary,
 } from "@/lib/activity";
 import { ApiError } from "@/lib/api";
+import { cacheGet } from "@/lib/api-cache";
 import { formatDateTime } from "@/lib/utils";
 import { fetchActivityLogs, type ActivityLogRow } from "@/services/activity";
 import { fetchTeamMembers } from "@/services/team";
@@ -21,9 +22,13 @@ export default function ActivityPage() {
   const [actorId, setActorId] = useState("");
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
-  const [rows, setRows] = useState<ActivityLogRow[]>([]);
-  const [team, setTeam] = useState<Array<{ id: string; userId?: string; displayName: string }>>([]);
-  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<ActivityLogRow[]>(
+    () => cacheGet<ActivityLogRow[]>("activity::::::1:100") ?? []
+  );
+  const [team, setTeam] = useState<Array<{ id: string; userId?: string; displayName: string }>>(
+    () => cacheGet("team:list") ?? []
+  );
+  const [loading, setLoading] = useState(() => !cacheGet("activity::::::1:100"));
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -40,7 +45,6 @@ export default function ActivityPage() {
   }, []);
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
     setError("");
     try {
       const data = await fetchActivityLogs(
@@ -53,11 +57,11 @@ export default function ActivityPage() {
         },
         signal
       );
+      if (signal?.aborted) return;
       setRows(Array.isArray(data) ? data : []);
     } catch (err) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       setError(err instanceof ApiError ? err.message : "Failed to load logs");
-      setRows([]);
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -99,7 +103,9 @@ export default function ActivityPage() {
           </p>
         </div>
         <p className="text-sm font-medium text-stone-700 dark:text-stone-200">
-          {loading ? "Loading…" : `${rows.length} log${rows.length === 1 ? "" : "s"}`}
+          {loading && rows.length === 0
+            ? "Loading…"
+            : `${rows.length} log${rows.length === 1 ? "" : "s"}`}
         </p>
       </div>
 
@@ -115,11 +121,13 @@ export default function ActivityPage() {
           onChange={(e) => setActorId(e.target.value)}
         >
           <option value="">All people</option>
-          {team.map((t) => (
-            <option key={t.id} value={t.userId || t.id}>
-              {t.displayName}
-            </option>
-          ))}
+          {team
+            .filter((t) => t.userId)
+            .map((t) => (
+              <option key={t.id} value={t.userId}>
+                {t.displayName}
+              </option>
+            ))}
         </select>
         <select
           className="h-10 rounded-md border border-stone-300 bg-white px-3 text-sm dark:border-stone-700 dark:bg-stone-900"
@@ -167,7 +175,8 @@ export default function ActivityPage() {
               const showReason = actionNeedsReason(a.action);
               const changes = formatChangeSummary(
                 (a.old_values as Record<string, unknown>) || undefined,
-                (a.new_values as Record<string, unknown>) || undefined
+                (a.new_values as Record<string, unknown>) || undefined,
+                a.action
               );
               return (
                 <tr key={a.id} className="border-t align-top dark:border-stone-800">

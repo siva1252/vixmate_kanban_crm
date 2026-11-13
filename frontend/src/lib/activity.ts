@@ -121,11 +121,32 @@ function formatValue(value: unknown): string {
   return String(value);
 }
 
+const DELETE_STYLE = /_(deleted|removed|deactivated|unassigned)$/;
+
 /** Human-readable summary of old → new values for logs. */
 export function formatChangeSummary(
   oldValues?: Record<string, unknown>,
-  newValues?: Record<string, unknown>
+  newValues?: Record<string, unknown>,
+  action?: string
 ): string[] {
+  // Delete / remove style actions: show only the user action, not every cleared field.
+  if (action && DELETE_STYLE.test(action)) {
+    const name =
+      (typeof oldValues?.client_name === "string" && oldValues.client_name) ||
+      (typeof oldValues?.clientName === "string" && oldValues.clientName) ||
+      (typeof oldValues?.display_name === "string" && oldValues.display_name) ||
+      (typeof oldValues?.displayName === "string" && oldValues.displayName) ||
+      (typeof oldValues?.name === "string" && oldValues.name) ||
+      null;
+    if (action === "client_deleted") {
+      return name ? [`Deleted lead “${name}”`] : ["Lead deleted"];
+    }
+    if (name) return [`Removed “${name}”`];
+    if (newValues?.status != null) return [`Status: ${formatValue(newValues.status)}`];
+    if (newValues?.is_deleted === true || newValues?.is_active === false) return ["Deactivated / removed"];
+    return ["Removed"];
+  }
+
   const keys = new Set([
     ...Object.keys(oldValues ?? {}),
     ...Object.keys(newValues ?? {}),
@@ -146,13 +167,23 @@ export function formatChangeSummary(
       continue;
     }
 
+    // Skip empty create noise (—, blank, false-y placeholders)
+    const isEmpty = (v: unknown) =>
+      v == null || v === "" || v === false || (typeof v === "string" && !v.trim());
+
     const label = fieldLabel(key);
     if (before !== undefined && after !== undefined) {
       lines.push(`${label}: ${formatValue(before)} → ${formatValue(after)}`);
     } else if (after !== undefined) {
+      if (isEmpty(after) && !(typeof after === "boolean")) continue;
+      if (after === false && key.includes("first_call")) {
+        // still useful to show first call = No on create? skip — default state
+        continue;
+      }
       lines.push(`${label}: ${formatValue(after)}`);
     } else {
-      lines.push(`${label}: removed (${formatValue(before)})`);
+      // Skip one-sided "removed" dumps from legacy delete snapshots
+      continue;
     }
   }
   return lines;

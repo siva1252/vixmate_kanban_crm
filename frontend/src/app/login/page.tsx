@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
-import { login } from "@/mock-services/auth";
+import { getSession, login } from "@/mock-services/auth";
 import { useToast } from "@/components/toast";
 import { ApiError } from "@/lib/api";
 
@@ -33,9 +34,26 @@ export default function LoginPage() {
     defaultValues: { email: "", password: "" },
   });
 
+  useEffect(() => {
+    if (getSession()) {
+      router.replace("/dashboard");
+      return;
+    }
+    // Prefetch main app chunk so post-login open is faster
+    try {
+      router.prefetch("/dashboard");
+      router.prefetch("/boards");
+      router.prefetch("/team");
+    } catch {
+      // ignore
+    }
+  }, [router]);
+
   return (
     <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_20%_20%,#cfe8df,transparent_40%),linear-gradient(160deg,#f4efe6,#e7eee9)] p-4 dark:bg-[radial-gradient(circle_at_20%_20%,#16352f,transparent_40%),linear-gradient(160deg,#101010,#18201d)]">
       <form
+        method="post"
+        action="#"
         onSubmit={handleSubmit(async (values) => {
           try {
             await login(values.email, values.password);
@@ -94,7 +112,7 @@ export default function LoginPage() {
             ) : null}
           </div>
         </div>
-        <Button className="mt-6 w-full" disabled={isSubmitting}>
+        <Button type="submit" className="mt-6 w-full" disabled={isSubmitting}>
           {isSubmitting ? "Signing in…" : "Sign in"}
         </Button>
         <p className="mt-4 text-center text-sm text-stone-600">

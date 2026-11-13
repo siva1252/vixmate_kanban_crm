@@ -1,0 +1,16 @@
+{
+  "name": "viximate-leads",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "prepare": "husky",
+    "lint": "npm --prefix frontend run lint",
+    "test": "npm --prefix frontend run test",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix frontend exec -- tsc -p frontend --noEmit"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.4.3"
+  }
+}

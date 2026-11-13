@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -9,35 +10,78 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { STAGES, meetings, tasks } from "@/mock-data/store";
-import { listClients } from "@/mock-services/clients";
-import { activities } from "@/mock-data/store";
+import { ApiError } from "@/lib/api";
+import { cacheGet } from "@/lib/api-cache";
+import { formatDateTime } from "@/lib/utils";
+import { fetchActivityLogs, type ActivityLogRow } from "@/services/activity";
+import { listClients } from "@/services/clients";
+import { fetchCrmConfig, type CrmConfig } from "@/services/configuration";
+import { actionLabel } from "@/lib/activity";
+import type { Client } from "@/types";
 
 export default function DashboardPage() {
-  const clients = listClients();
-  const stageData = STAGES.map((stage) => ({
-    name: stage.name,
-    count: clients.filter((c) => c.stageId === stage.id).length,
-  }));
+  const [clients, setClients] = useState<Client[]>(
+    () => cacheGet<Client[]>("clients::::::::") ?? []
+  );
+  const [config, setConfig] = useState<CrmConfig | null>(() => cacheGet<CrmConfig>("config:bundle"));
+  const [activities, setActivities] = useState<ActivityLogRow[]>(
+    () => cacheGet<ActivityLogRow[]>("activity::::::1:8") ?? []
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      setError("");
+      try {
+        const [rows, cfg, logs] = await Promise.all([
+          listClients({}, ac.signal),
+          fetchCrmConfig(ac.signal),
+          fetchActivityLogs({ page_size: 8 }, ac.signal),
+        ]);
+        if (ac.signal.aborted) return;
+        setClients(rows);
+        setConfig(cfg);
+        setActivities(logs);
+      } catch (err) {
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        setError(err instanceof ApiError ? err.message : "Failed to load dashboard");
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
+
+  const stageData = useMemo(() => {
+    const stages = config?.stages ?? [];
+    return stages.map((stage) => ({
+      name: stage.name,
+      count: clients.filter((c) => c.stageId === stage.id).length,
+    }));
+  }, [clients, config]);
 
   const stats = [
     { label: "Total leads", value: clients.length },
     { label: "New leads", value: stageData[0]?.count ?? 0 },
-    { label: "Qualified", value: stageData[3]?.count ?? 0 },
-    { label: "Pending tasks", value: tasks.filter((t) => t.status === "pending").length },
-    { label: "Upcoming meetings", value: meetings.filter((m) => m.status === "scheduled").length },
-    { label: "Won", value: stageData[7]?.count ?? 0 },
+    { label: "Qualified", value: stageData.find((s) => s.name === "Qualified")?.count ?? 0 },
+    { label: "Won", value: stageData.find((s) => s.name === "Won")?.count ?? 0 },
   ];
 
   return (
     <div className="space-y-6 p-3 sm:p-4 md:p-6">
       <div>
         <h1 className="font-display text-2xl sm:text-3xl">Dashboard</h1>
-        <p className="text-sm text-stone-500">Mock analytics from local CRM state</p>
+        <p className="text-sm text-stone-500">Live analytics from the database</p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
-          <div key={stat.label} className="rounded-xl border border-stone-200 bg-white/80 p-4 dark:border-stone-800 dark:bg-stone-950/60">
+          <div
+            key={stat.label}
+            className="rounded-xl border border-stone-200 bg-white/80 p-4 dark:border-stone-800 dark:bg-stone-950/60"
+          >
             <p className="text-xs uppercase tracking-wide text-stone-500">{stat.label}</p>
             <p className="mt-2 font-display text-3xl">{stat.value}</p>
           </div>
@@ -60,14 +104,21 @@ export default function DashboardPage() {
       <div className="rounded-xl border border-stone-200 bg-white/80 p-4 dark:border-stone-800 dark:bg-stone-950/60">
         <h2 className="mb-3 font-display text-xl">Recent activities</h2>
         <ul className="space-y-2 text-sm">
-          {activities.slice(0, 8).map((a) => (
-            <li key={a.id} className="flex justify-between gap-3 border-b border-stone-100 py-2 dark:border-stone-800">
+          {activities.map((a) => (
+            <li
+              key={a.id}
+              className="flex justify-between gap-3 border-b border-stone-100 py-2 dark:border-stone-800"
+            >
               <span>
-                {a.action} · {a.entityType}
+                {actionLabel(a.action)}
+                {a.client_name ? ` · ${a.client_name}` : ""}
               </span>
-              <span className="text-stone-500">{new Date(a.timestamp).toLocaleString()}</span>
+              <span className="text-stone-500">{formatDateTime(a.timestamp)}</span>
             </li>
           ))}
+          {!loading && activities.length === 0 ? (
+            <li className="py-4 text-stone-500">No activity yet. Create a lead to get started.</li>
+          ) : null}
         </ul>
       </div>
     </div>

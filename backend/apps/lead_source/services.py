@@ -68,9 +68,39 @@ def update_person(*, actor, person: LeadSourcePerson, data: dict, request=None) 
     if became_inactive and len(reason) < 3:
         raise ValidationError({"reason": "Reason is required to deactivate (min 3 characters)."})
     person.save()
+
+    unassigned_count = 0
+    if became_inactive and bool(data.get("unassign_leads")):
+        active_rows = list(
+            LeadSourceAttribution.objects.filter(person=person, is_active=True).select_related(
+                "client"
+            )
+        )
+        for row in active_rows:
+            row.is_active = False
+            row.save(update_fields=["is_active", "updated_at"])
+            write_audit_log(
+                actor=actor,
+                action="lead_source_unassigned",
+                entity_type="LeadSourceLink",
+                entity_id=row.id,
+                client=row.client,
+                description=(
+                    f"Unassigned {person.display_name} from {row.client.client_name} "
+                    f"(person deactivated)"
+                ),
+                reason=reason or "Person deactivated — remove leads",
+                old_values={"person": person.display_name, "client": row.client.client_name},
+                new_values={"is_active": False},
+                request=request,
+            )
+            unassigned_count += 1
+
     if became_inactive:
         action = "lead_source_person_deactivated"
         description = f"Deactivated Lead Source person {person.display_name}"
+        if unassigned_count:
+            description += f" — removed from {unassigned_count} lead(s)"
     elif became_active:
         action = "lead_source_person_activated"
         description = f"Activated Lead Source person {person.display_name}"
@@ -90,6 +120,7 @@ def update_person(*, actor, person: LeadSourcePerson, data: dict, request=None) 
             "email": person.email,
             "role_label": person.role_label,
             "is_active": person.is_active,
+            "leads_unassigned": unassigned_count if became_inactive else None,
         },
         reason=reason,
         request=request,

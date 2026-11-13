@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api";
+import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
 import type { AvailabilityStatus, TeamMember } from "@/types";
 
 type ApiTeamMember = {
@@ -12,6 +13,8 @@ type ApiTeamMember = {
   full_name?: string;
 };
 
+const TEAM_CACHE_KEY = "team:list";
+
 export function mapTeamMember(row: ApiTeamMember): TeamMember & { userId?: string } {
   return {
     id: String(row.id),
@@ -24,7 +27,17 @@ export function mapTeamMember(row: ApiTeamMember): TeamMember & { userId?: strin
   };
 }
 
-export async function fetchTeamMembers(signal?: AbortSignal) {
+export async function fetchTeamMembers(signal?: AbortSignal, opts?: { force?: boolean }) {
+  if (!opts?.force) {
+    const cached = cacheGet<Array<TeamMember & { userId?: string }>>(TEAM_CACHE_KEY);
+    if (cached) return cached;
+  }
   const rows = await apiRequest<ApiTeamMember[]>("/api/team/", { signal });
-  return (rows || []).map(mapTeamMember);
+  const mapped = (rows || []).map(mapTeamMember);
+  cacheSet(TEAM_CACHE_KEY, mapped);
+  return mapped;
+}
+
+export function invalidateTeamCache() {
+  cacheInvalidate("team:");
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragEndEvent,
@@ -12,62 +12,33 @@ import {
 } from "@dnd-kit/core";
 import Image from "next/image";
 import Link from "next/link";
-import {
-  Columns3,
-  Filter,
-  Plus,
-  Search,
-  Settings2,
-  Table2,
-} from "lucide-react";
-import { getSession } from "@/mock-services/auth";
-import { getKanbanBoard, moveCard } from "@/mock-services/kanban";
-import {
-  assignments,
-  clients,
-  LEAD_SOURCES,
-  SERVICES,
-  STAGES,
-  TEAM,
-  working,
-} from "@/mock-data/store";
+import { Columns3, Filter, Plus, Search, Settings2, Table2 } from "lucide-react";
 import { useToast } from "@/components/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ColumnsSettings } from "@/features/kanban/columns-settings";
-import type { Client } from "@/types";
+import { ApiError } from "@/lib/api";
+import { cacheGet } from "@/lib/api-cache";
 import { cn, formatDate } from "@/lib/utils";
+import { fetchCrmConfig, type CrmConfig } from "@/services/configuration";
+import { fetchKanbanBoard, moveCard, type KanbanColumn } from "@/services/kanban";
+import type { Client } from "@/types";
 
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
-function assigneesFor(clientId: string) {
-  const fromAssignments = assignments
-    .filter((a) => a.clientId === clientId && a.isActive)
-    .map((a) => a.teamMemberId);
-  const fromWorking = working
-    .filter((w) => w.clientId === clientId && w.isActive)
-    .map((w) => w.teamMemberId);
-  const unique = [...new Set([...fromAssignments, ...fromWorking])];
-  return TEAM.filter((t) => unique.includes(t.id));
-}
-
-function Card({ client }: { client: Client }) {
+function Card({
+  client,
+  serviceName,
+  sourceName,
+}: {
+  client: Client;
+  serviceName?: string;
+  sourceName?: string;
+}) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: client.id,
   });
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
-  const service = SERVICES.find((s) => s.id === client.serviceId);
-  const source = LEAD_SOURCES.find((s) => s.id === client.leadSourceId);
-  const people = assigneesFor(client.id);
 
   return (
     <div
@@ -82,7 +53,7 @@ function Card({ client }: { client: Client }) {
     >
       <div className="mb-2">
         <span className="inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-200">
-          {service?.name ?? "Lead"}
+          {serviceName ?? "Lead"}
         </span>
       </div>
       <Link
@@ -96,8 +67,8 @@ function Card({ client }: { client: Client }) {
       <p className="mt-1 line-clamp-2 text-xs text-stone-500">
         {client.primaryEmail
           ? client.primaryEmail
-          : source
-            ? `Lead via ${source.name}`
+          : sourceName
+            ? `Lead via ${sourceName}`
             : "No email on file"}
       </p>
       <p className="mt-2 text-[11px] text-stone-400">Updated {formatDate(client.updatedAt)}</p>
@@ -116,17 +87,6 @@ function Card({ client }: { client: Client }) {
             {client.primaryPhone}
           </span>
         </div>
-        <div className="flex -space-x-1.5">
-          {people.slice(0, 3).map((p) => (
-            <span
-              key={p.id}
-              title={p.displayName}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-teal-800 text-[9px] font-semibold text-white dark:border-stone-900"
-            >
-              {initials(p.displayName)}
-            </span>
-          ))}
-        </div>
       </div>
     </div>
   );
@@ -137,11 +97,13 @@ function Column({
   title,
   color,
   cards,
+  config,
 }: {
   id: string;
   title: string;
   color?: string;
   cards: Client[];
+  config: CrmConfig | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
@@ -154,10 +116,7 @@ function Column({
           : "border-stone-200 bg-stone-100/70 dark:border-stone-800 dark:bg-stone-950/50"
       )}
     >
-      <div
-        className="h-1.5 shrink-0 rounded-t-2xl"
-        style={{ backgroundColor: color ?? "#0f766e" }}
-      />
+      <div className="h-1.5 shrink-0 rounded-t-2xl" style={{ backgroundColor: color ?? "#0f766e" }} />
       <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -176,7 +135,14 @@ function Column({
             Drop cards here
           </div>
         ) : (
-          cards.map((card) => <Card key={card.id} client={card} />)
+          cards.map((card) => (
+            <Card
+              key={card.id}
+              client={card}
+              serviceName={config?.services.find((s) => s.id === card.serviceId)?.name}
+              sourceName={config?.leadSources.find((s) => s.id === card.leadSourceId)?.name}
+            />
+          ))
         )}
       </div>
     </div>
@@ -187,62 +153,78 @@ export function KanbanBoard() {
   const [tick, setTick] = useState(0);
   const [view, setView] = useState<"kanban" | "table">("kanban");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
-  const [stageId, setStageId] = useState("");
   const [sourceId, setSourceId] = useState("");
   const [serviceId, setServiceId] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [email, setEmail] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [board, setBoard] = useState<KanbanColumn[]>(
+    () => cacheGet<KanbanColumn[]>("kanban:board::::") ?? []
+  );
+  const [config, setConfig] = useState<CrmConfig | null>(() => cacheGet<CrmConfig>("config:bundle"));
+  const [loading, setLoading] = useState(() => !cacheGet("kanban:board::::"));
   const { push } = useToast();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  const leadOptions = useMemo(
-    () =>
-      [...clients].sort((a, b) => a.clientName.localeCompare(b.clientName)),
-    [tick]
-  );
-  const emailOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of clients) {
-      if (c.primaryEmail) set.add(c.primaryEmail);
-      if (c.alternateEmail) set.add(c.alternateEmail);
-    }
-    return [...set].sort((a, b) => a.localeCompare(b));
-  }, [tick]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(t);
+  }, [search]);
 
-  const filters = useMemo(
-    () => ({
-      search: search || undefined,
-      stageId: stageId || undefined,
-      sourceId: sourceId || undefined,
-      serviceId: serviceId || undefined,
-      clientId: clientId || undefined,
-      email: email || undefined,
-      dateFrom: dateFrom || undefined,
-      dateTo: dateTo || undefined,
-    }),
-    [search, stageId, sourceId, serviceId, clientId, email, dateFrom, dateTo]
-  );
+  useEffect(() => {
+    const ac = new AbortController();
+    void fetchCrmConfig(ac.signal)
+      .then((c) => {
+        if (!ac.signal.aborted) setConfig(c);
+      })
+      .catch(() => undefined);
+    return () => ac.abort();
+  }, []);
 
-  const board = useMemo(() => getKanbanBoard(filters), [tick, filters]);
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      const emptyBoard = board.length === 0;
+      if (emptyBoard) setLoading(true);
+      try {
+        const rows = await fetchKanbanBoard(
+          {
+            search: debouncedSearch || undefined,
+            sourceId: sourceId || undefined,
+            serviceId: serviceId || undefined,
+          },
+          ac.signal,
+          { force: tick > 0 }
+        );
+        if (!ac.signal.aborted) setBoard(rows);
+      } catch (err) {
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        push(err instanceof ApiError ? err.message : "Failed to load board", "error");
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, sourceId, serviceId, tick, push]);
+
   const flatCards = useMemo(() => board.flatMap((c) => c.cards), [board]);
 
   const onDragEnd = (event: DragEndEvent) => {
-    const clientId = String(event.active.id);
+    const id = String(event.active.id);
     const nextStageId = event.over ? String(event.over.id) : null;
     if (!nextStageId) return;
-    const session = getSession();
-    if (!session) return;
-    try {
-      moveCard(clientId, nextStageId, session.teamMemberId);
-      setTick((t) => t + 1);
-      push("Stage updated");
-    } catch (err) {
-      push(err instanceof Error ? err.message : "Move failed", "error");
-    }
+    const current = flatCards.find((c) => c.id === id);
+    if (current?.stageId === nextStageId) return;
+    void (async () => {
+      try {
+        await moveCard(id, nextStageId);
+        setTick((t) => t + 1);
+        push("Stage updated");
+      } catch (err) {
+        push(err instanceof ApiError ? err.message : "Move failed", "error");
+      }
+    })();
   };
 
   return (
@@ -251,6 +233,7 @@ export function KanbanBoard() {
         <p>
           Home <span className="mx-1">/</span> Boards
         </p>
+        {loading && board.length === 0 ? <p>Loading board…</p> : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -260,7 +243,9 @@ export function KanbanBoard() {
             onClick={() => setView("kanban")}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm",
-              view === "kanban" ? "bg-teal-900 text-white" : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+              view === "kanban"
+                ? "bg-teal-900 text-white"
+                : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
             )}
           >
             <Columns3 className="h-3.5 w-3.5" />
@@ -271,7 +256,9 @@ export function KanbanBoard() {
             onClick={() => setView("table")}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm",
-              view === "table" ? "bg-teal-900 text-white" : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+              view === "table"
+                ? "bg-teal-900 text-white"
+                : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
             )}
           >
             <Table2 className="h-3.5 w-3.5" />
@@ -312,23 +299,11 @@ export function KanbanBoard() {
         <div className="flex w-full flex-nowrap items-center gap-2 overflow-x-auto rounded-xl border border-stone-200 bg-white/80 p-2 dark:border-stone-800 dark:bg-stone-950/50">
           <select
             className="h-10 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-sm dark:border-stone-700 dark:bg-stone-900"
-            value={stageId}
-            onChange={(e) => setStageId(e.target.value)}
-          >
-            <option value="">All stages</option>
-            {STAGES.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-10 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-sm dark:border-stone-700 dark:bg-stone-900"
             value={sourceId}
             onChange={(e) => setSourceId(e.target.value)}
           >
             <option value="">All sources</option>
-            {LEAD_SOURCES.map((s) => (
+            {(config?.leadSources ?? []).map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>
@@ -340,53 +315,12 @@ export function KanbanBoard() {
             onChange={(e) => setServiceId(e.target.value)}
           >
             <option value="">All services</option>
-            {SERVICES.map((s) => (
+            {(config?.services ?? []).map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>
             ))}
           </select>
-          <select
-            className="h-10 min-w-0 flex-[1.3] rounded-md border border-stone-300 bg-white px-2 text-sm dark:border-stone-700 dark:bg-stone-900"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          >
-            <option value="">All lead names</option>
-            {leadOptions.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.clientName}
-                {c.primaryEmail ? ` · ${c.primaryEmail}` : ""}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-10 min-w-0 flex-[1.2] rounded-md border border-stone-300 bg-white px-2 text-sm dark:border-stone-700 dark:bg-stone-900"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          >
-            <option value="">All emails</option>
-            {emailOptions.map((mail) => (
-              <option key={mail} value={mail}>
-                {mail}
-              </option>
-            ))}
-          </select>
-          <Input
-            type="date"
-            aria-label="From date"
-            title="From date"
-            className="h-10 min-w-0 flex-1"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-          <Input
-            type="date"
-            aria-label="To date"
-            title="To date"
-            className="h-10 min-w-0 flex-1"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
         </div>
       ) : null}
 
@@ -401,6 +335,7 @@ export function KanbanBoard() {
                   title={column.stage.name}
                   color={column.stage.color}
                   cards={column.cards}
+                  config={config}
                 />
               ))}
             </div>
@@ -422,17 +357,24 @@ export function KanbanBoard() {
               {flatCards.map((c) => (
                 <tr key={c.id} className="border-t dark:border-stone-800">
                   <td className="px-3 py-2">
-                    <Link href={`/leads/${c.id}`} className="font-medium text-teal-900 underline dark:text-teal-300">
+                    <Link
+                      href={`/leads/${c.id}`}
+                      className="font-medium text-teal-900 underline dark:text-teal-300"
+                    >
                       {c.clientName}
                     </Link>
                   </td>
                   <td className="px-3 py-2">{c.primaryPhone}</td>
-                  <td className="px-3 py-2">{STAGES.find((s) => s.id === c.stageId)?.name}</td>
-                  <td className="px-3 py-2">{SERVICES.find((s) => s.id === c.serviceId)?.name}</td>
+                  <td className="px-3 py-2">
+                    {board.find((col) => col.stage.id === c.stageId)?.stage.name ?? "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    {config?.services.find((s) => s.id === c.serviceId)?.name ?? "—"}
+                  </td>
                   <td className="px-3 py-2">{formatDate(c.updatedAt)}</td>
                 </tr>
               ))}
-              {flatCards.length === 0 ? (
+              {!loading && flatCards.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-3 py-10 text-center text-stone-500">
                     No leads match these filters.

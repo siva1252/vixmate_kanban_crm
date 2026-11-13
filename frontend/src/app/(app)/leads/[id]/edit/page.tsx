@@ -1,30 +1,56 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getClient, updateClient } from "@/mock-services/clients";
+import { getClient, updateClient } from "@/services/clients";
 import { getSession } from "@/mock-services/auth";
 import { useToast } from "@/components/toast";
 import { ReasonDialog } from "@/components/reason-dialog";
+import { ApiError } from "@/lib/api";
+import type { Client } from "@/types";
 
 export default function EditLeadPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { push } = useToast();
-  const existing = getClient(params.id);
-  const [name, setName] = useState(existing?.clientName ?? "");
-  const [phone, setPhone] = useState(existing?.primaryPhone ?? "");
-  const [deal, setDeal] = useState(String(existing?.estimatedDealValue ?? ""));
+  const [existing, setExisting] = useState<Client | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [deal, setDeal] = useState("");
   const [editing, setEditing] = useState(false);
   const [editReason, setEditReason] = useState("");
   const [reasonOpen, setReasonOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  if (!existing) return <p>Lead not found.</p>;
+  useEffect(() => {
+    const ac = new AbortController();
+    void getClient(params.id, ac.signal)
+      .then((c) => {
+        if (ac.signal.aborted) return;
+        setExisting(c);
+        setName(c.clientName);
+        setPhone(c.primaryPhone);
+        setDeal(String(c.estimatedDealValue ?? ""));
+      })
+      .catch((err) => {
+        if (ac.signal.aborted) return;
+        push(err instanceof ApiError ? err.message : "Lead not found", "error");
+        setExisting(null);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
+      });
+    return () => ac.abort();
+  }, [params.id, push]);
 
-  const save = () => {
+  if (loading) return <p className="p-6 text-stone-500">Loading…</p>;
+  if (!existing) return <p className="p-6">Lead not found.</p>;
+
+  const save = async () => {
     const session = getSession();
     if (!session) return;
     if (!editReason.trim()) {
@@ -32,15 +58,15 @@ export default function EditLeadPage() {
       return;
     }
     const nextDeal = deal ? Number(deal) : undefined;
+    setSaving(true);
     try {
-      updateClient(
+      await updateClient(
         existing.id,
         {
           clientName: name,
           primaryPhone: phone.replace(/\D/g, "").slice(0, 15),
           estimatedDealValue: nextDeal,
         },
-        session.teamMemberId,
         editReason
       );
       push("Lead updated");
@@ -50,7 +76,9 @@ export default function EditLeadPage() {
         setReasonOpen(true);
         return;
       }
-      push(err instanceof Error ? err.message : "Update failed", "error");
+      push(err instanceof ApiError ? err.message : "Update failed", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -78,7 +106,6 @@ export default function EditLeadPage() {
           <Label>Primary phone</Label>
           <Input
             disabled={!editing}
-            maxLength={15}
             value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 15))}
           />
@@ -87,37 +114,35 @@ export default function EditLeadPage() {
           <Label>Estimated deal value</Label>
           <Input disabled={!editing} value={deal} onChange={(e) => setDeal(e.target.value)} />
         </div>
-        {editing ? (
-          <div className="flex gap-2">
-            <Button onClick={save}>Save</Button>
+        <div className="flex gap-2">
+          {!editing ? (
             <Button
-              variant="outline"
+              type="button"
               onClick={() => {
-                setEditing(false);
-                setEditReason("");
-                setName(existing.clientName);
-                setPhone(existing.primaryPhone);
-                setDeal(String(existing.estimatedDealValue ?? ""));
+                setReasonOpen(true);
               }}
             >
-              Cancel
+              Edit
             </Button>
-          </div>
-        ) : (
-          <Button variant="outline" onClick={() => setReasonOpen(true)}>
-            Edit
+          ) : (
+            <Button type="button" loading={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          )}
+          <Button type="button" variant="outline" onClick={() => router.push(`/leads/${existing.id}`)}>
+            Cancel
           </Button>
-        )}
+        </div>
       </div>
       <ReasonDialog
         open={reasonOpen}
-        title="Edit lead"
-        description="Explain what you are changing before editing."
+        title="Reason for edit"
+        description="A reason is required before editing this lead."
         onClose={() => setReasonOpen(false)}
         onConfirm={(reason) => {
           setEditReason(reason);
-          setReasonOpen(false);
           setEditing(true);
+          setReasonOpen(false);
         }}
       />
     </div>

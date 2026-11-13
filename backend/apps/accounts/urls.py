@@ -21,6 +21,11 @@ urlpatterns = [
         views.PasswordChangeConfirmView.as_view(),
         name="auth-password-change-confirm",
     ),
+    path(
+        "password/change/",
+        views.PasswordChangeDirectView.as_view(),
+        name="auth-password-change-direct",
+    ),
     # Team users are created manually (Admin / seed_demo_users), not via public API.
     path(
         "users/<uuid:user_id>/activate/",

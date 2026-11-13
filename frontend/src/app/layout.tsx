@@ -15,12 +15,16 @@ const sans = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Viximate CRM (Mock Mode)",
-  description: "Independent mock frontend for Viximate CRM — not connected to Django.",
+  title: "Viximate CRM",
+  description: "Viximate internal CRM",
   icons: {
-    icon: [{ url: "/brand/viximate-logo.png", type: "image/png" }],
-    apple: [{ url: "/brand/viximate-logo.png" }],
-    shortcut: ["/brand/viximate-logo.png"],
+    icon: [
+      { url: "/brand/favicon-32.png?v=4", type: "image/png", sizes: "32x32" },
+      { url: "/brand/favicon.png?v=4", type: "image/png", sizes: "64x64" },
+      { url: "/icon.png?v=4", type: "image/png", sizes: "32x32" },
+    ],
+    apple: [{ url: "/brand/icon-192.png?v=4", type: "image/png", sizes: "192x192" }],
+    shortcut: ["/brand/favicon-32.png?v=4"],
   },
 };
 

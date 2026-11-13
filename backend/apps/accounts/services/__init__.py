@@ -1,6 +1,7 @@
 from .auth import (
     activate_user,
     change_password_confirm,
+    change_password_direct,
     change_password_request,
     create_team_user,
     deactivate_user,
@@ -16,6 +17,7 @@ from .auth import (
 __all__ = [
     "activate_user",
     "change_password_confirm",
+    "change_password_direct",
     "change_password_request",
     "create_team_user",
     "deactivate_user",

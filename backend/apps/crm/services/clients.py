@@ -26,8 +26,9 @@ def _default_new_lead_stage() -> LeadStage:
     return stage
 
 
-def _snapshot(client: Client) -> dict:
-    return {
+def _snapshot(client: Client, *, compact: bool = False) -> dict:
+    """Audit snapshot. compact=True keeps only meaningful filled fields (for create logs)."""
+    raw = {
         "client_name": client.client_name,
         "primary_phone": client.primary_phone,
         "alternate_phone": client.alternate_phone,
@@ -43,6 +44,17 @@ def _snapshot(client: Client) -> dict:
         "project_deadline": str(client.project_deadline) if client.project_deadline else None,
         "agreed_project_scope": client.agreed_project_scope,
     }
+    if not compact:
+        return raw
+    # Create / summary: drop blanks and default false first_call
+    out = {}
+    for key, value in raw.items():
+        if value is None or value == "":
+            continue
+        if key == "first_call_completed" and value is False:
+            continue
+        out[key] = value
+    return out
 
 
 @transaction.atomic
@@ -130,8 +142,8 @@ def create_client(*, actor, data: dict, request=None) -> Client:
         entity_type="Client",
         entity_id=client.id,
         client=client,
-        new_values=_snapshot(client),
-        description=f"Created client {client.client_name}",
+        new_values=_snapshot(client, compact=True),
+        description=f"Created lead {client.client_name}",
         request=request,
     )
     return client
@@ -286,18 +298,19 @@ def move_client_stage(*, actor, client: Client, new_stage: LeadStage, request=No
 @transaction.atomic
 def soft_delete_client(*, actor, client: Client, reason: str, request=None) -> Client:
     cleaned = require_reason(reason)
-    old = _snapshot(client)
+    client_name = client.client_name
     client.soft_delete(actor=actor, reason=cleaned)
+    # Keep audit compact — only what the user did, not a full field dump.
     write_audit_log(
         actor=actor,
         action="client_deleted",
         entity_type="Client",
         entity_id=client.id,
         client=client,
-        old_values=old,
-        new_values={"is_deleted": True},
+        old_values={"client_name": client_name},
+        new_values={"status": "deleted"},
         reason=cleaned,
-        description=f"Soft-deleted client {client.client_name}",
+        description=f"Deleted lead {client_name}",
         request=request,
     )
     return client

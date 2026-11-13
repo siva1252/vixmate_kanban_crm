@@ -1,20 +1,7 @@
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-viximate_crm}
-      POSTGRES_USER: ${POSTGRES_USER:-viximate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-viximate_dev}
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-viximate} -d ${POSTGRES_DB:-viximate_crm}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+# Local / lab compose. Jenkins uses the Jenkinsfile + Docker run directly.
+# Ports match docs/domains.md: FE 6018, BE 6019. Postgres stays on the host by default.
 
+services:
   backend:
     build:
       context: .
@@ -22,17 +9,44 @@ services:
     env_file:
       - backend/.env
     environment:
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
+      # Override only if you also start the optional `db` service below.
+      # POSTGRES_HOST: db
+      # POSTGRES_PORT: 5432
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "6019:8000"
     volumes:
-      - ./backend:/app
       - media_data:/app/media
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:6019}
+    ports:
+      - "6018:3000"
     depends_on:
-      db:
-        condition: service_healthy
+      - backend
+    restart: unless-stopped
+
+  # Optional local Postgres if you do not already have one on the host.
+  # Uncomment and set POSTGRES_HOST=db in backend/.env when using this.
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: ${POSTGRES_DB:-vix_kanban}
+  #     POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data:
   media_data:
+  # postgres_data:

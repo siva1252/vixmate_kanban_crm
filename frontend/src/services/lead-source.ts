@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api";
+import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
 import type { LeadSourcePerson } from "@/types";
 
 type ApiPerson = {
@@ -44,8 +45,14 @@ export async function fetchLeadSourcePeople(
     client?: string;
     person?: string;
   } = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: { force?: boolean }
 ) {
+  const key = `lead-source:${query.search || ""}:${query.status || ""}:${query.has_leads || ""}:${query.client || ""}:${query.person || ""}`;
+  if (!opts?.force) {
+    const cached = cacheGet<Array<LeadSourcePerson & { leadCount?: number }>>(key);
+    if (cached) return cached;
+  }
   const rows = await apiRequest<ApiPerson[]>("/api/lead-source/", {
     query: {
       search: query.search,
@@ -58,7 +65,12 @@ export async function fetchLeadSourcePeople(
   });
   let people = (rows || []).map(mapPerson);
   if (query.person) people = people.filter((p) => p.id === query.person);
+  cacheSet(key, people);
   return people;
+}
+
+export function invalidateLeadSourceCache() {
+  cacheInvalidate("lead-source:");
 }
 
 export async function createLeadSourcePerson(body: {
@@ -72,6 +84,7 @@ export async function createLeadSourcePerson(body: {
     method: "POST",
     body,
   });
+  invalidateLeadSourceCache();
   return mapPerson(row);
 }
 
@@ -85,12 +98,14 @@ export async function updateLeadSourcePerson(
     notes: string;
     is_active: boolean;
     reason: string;
+    unassign_leads: boolean;
   }>
 ) {
   const row = await apiRequest<ApiPerson>(`/api/lead-source/${personId}/`, {
     method: "PATCH",
     body,
   });
+  invalidateLeadSourceCache();
   return mapPerson(row);
 }
 
@@ -99,17 +114,21 @@ export async function assignPeopleToLead(body: {
   people: string[];
   note?: string;
 }) {
-  return apiRequest<ApiAttribution[]>("/api/lead-source/assign/", {
+  const rows = await apiRequest<ApiAttribution[]>("/api/lead-source/assign/", {
     method: "POST",
     body,
   });
+  invalidateLeadSourceCache();
+  return rows;
 }
 
 export async function unlinkAttribution(attributionId: string, reason: string) {
-  return apiRequest(`/api/lead-source/attributions/${attributionId}/`, {
+  const result = await apiRequest(`/api/lead-source/attributions/${attributionId}/`, {
     method: "DELETE",
     body: { reason },
   });
+  invalidateLeadSourceCache();
+  return result;
 }
 
 export type PersonLeadsPayload = {

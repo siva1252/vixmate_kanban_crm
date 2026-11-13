@@ -2,15 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
-import {
-  confirmPasswordChange,
-  getSession,
-  refreshSession,
-  requestPasswordChange,
-} from "@/mock-services/auth";
+import { changePasswordDirect, getSession, refreshSession } from "@/mock-services/auth";
 import { useToast } from "@/components/toast";
 import { ApiError } from "@/lib/api";
 
@@ -25,8 +19,6 @@ function initials(name: string) {
 
 export default function ProfilePage() {
   const [session, setSession] = useState(getSession());
-  const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -34,9 +26,13 @@ export default function ProfilePage() {
   const { push } = useToast();
 
   useEffect(() => {
+    let cancelled = false;
     void refreshSession().then((s) => {
-      if (s) setSession(s);
+      if (!cancelled && s) setSession(s);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!session) {
@@ -68,16 +64,16 @@ export default function ProfilePage() {
               <dd className="mt-1 text-sm font-medium">{session.fullName}</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wide text-stone-500">Email</dt>
+              <dt className="text-xs uppercase tracking-wide text-stone-500">Work email</dt>
               <dd className="mt-1 break-all text-sm font-medium">{session.email}</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wide text-stone-500">User ID</dt>
-              <dd className="mt-1 break-all text-sm font-medium">{session.id}</dd>
+              <dt className="text-xs uppercase tracking-wide text-stone-500">Role</dt>
+              <dd className="mt-1 text-sm font-medium">Admin</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wide text-stone-500">Team member ID</dt>
-              <dd className="mt-1 break-all text-sm font-medium">{session.teamMemberId}</dd>
+              <dt className="text-xs uppercase tracking-wide text-stone-500">Account status</dt>
+              <dd className="mt-1 text-sm font-medium text-teal-800 dark:text-teal-300">Active</dd>
             </div>
           </dl>
         </section>
@@ -86,97 +82,67 @@ export default function ProfilePage() {
           <div>
             <h2 className="font-medium">Change password</h2>
             <p className="mt-1 text-xs text-stone-500">
-              Request an OTP, then confirm with your current password and a new password.
+              Enter your current password and a new password, then update.
             </p>
           </div>
-          {!otpSent ? (
-            <Button
-              disabled={busy}
-              onClick={() => {
-                void (async () => {
-                  setBusy(true);
-                  try {
-                    push(await requestPasswordChange());
-                    setOtpSent(true);
-                  } catch (err) {
-                    push(err instanceof ApiError ? err.message : "Request failed", "error");
-                  } finally {
-                    setBusy(false);
-                  }
-                })();
-              }}
-            >
-              {busy ? "Sending…" : "Send OTP"}
-            </Button>
-          ) : (
-            <>
-              <div>
-                <Label htmlFor="otp">OTP</Label>
-                <Input
-                  id="otp"
-                  placeholder="6-digit code"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                />
-              </div>
-              <div>
-                <Label htmlFor="current-password">Current password</Label>
-                <PasswordInput
-                  id="current-password"
-                  placeholder="Current password"
-                  autoComplete="current-password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor="new-password">New password</Label>
-                <PasswordInput
-                  id="new-password"
-                  placeholder="At least 8 characters"
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor="confirm-password">Confirm new password</Label>
-                <PasswordInput
-                  id="confirm-password"
-                  placeholder="Re-enter new password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  void (async () => {
-                    if (password !== confirmPassword) {
-                      push("New password and confirm password do not match.", "error");
-                      return;
-                    }
-                    setBusy(true);
-                    try {
-                      push(await confirmPasswordChange(otp, currentPassword, password));
-                      setOtpSent(false);
-                      setOtp("");
-                      setCurrentPassword("");
-                      setPassword("");
-                      setConfirmPassword("");
-                    } catch (err) {
-                      push(err instanceof ApiError ? err.message : "Update failed", "error");
-                    } finally {
-                      setBusy(false);
-                    }
-                  })();
-                }}
-              >
-                {busy ? "Updating…" : "Update password"}
-              </Button>
-            </>
-          )}
+          <div>
+            <Label htmlFor="current-password">Current password</Label>
+            <PasswordInput
+              id="current-password"
+              placeholder="Current password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="new-password">New password</Label>
+            <PasswordInput
+              id="new-password"
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="confirm-password">Confirm new password</Label>
+            <PasswordInput
+              id="confirm-password"
+              placeholder="Re-enter new password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </div>
+          <Button
+            disabled={busy || !currentPassword || !password || !confirmPassword}
+            onClick={() => {
+              void (async () => {
+                if (password.length < 8) {
+                  push("New password must be at least 8 characters.", "error");
+                  return;
+                }
+                if (password !== confirmPassword) {
+                  push("New password and confirm password do not match.", "error");
+                  return;
+                }
+                setBusy(true);
+                try {
+                  push(await changePasswordDirect(currentPassword, password));
+                  setCurrentPassword("");
+                  setPassword("");
+                  setConfirmPassword("");
+                } catch (err) {
+                  push(err instanceof ApiError ? err.message : "Update failed", "error");
+                } finally {
+                  setBusy(false);
+                }
+              })();
+            }}
+          >
+            {busy ? "Updating…" : "Update password"}
+          </Button>
         </section>
       </div>
     </div>
