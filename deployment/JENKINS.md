@@ -1,45 +1,76 @@
 # Jenkins deploy — Viximate Leads CRM
 
-## Ports (from `docs/domains.md`)
+## Ports
 
 | Service | Host port | Domain |
 |---------|-----------|--------|
 | Frontend | **6018** | `leads.internal.viximate.com`, `www.leads.internal.viximate.com` |
 | Backend | **6019** | `leads-api.internal.viximate.com` |
 
-Local URLs stay available (`127.0.0.1:6018` / `6019`). Database is **local Postgres on the host** only.
+Database is **local Postgres on the Jenkins host** (`host.docker.internal` from containers).
 
-## Jenkins credential IDs (Secret file)
+## Env credentials (Secret file) — set these in Jenkins
 
-| ID | Template |
-|----|----------|
-| `vix-leads-frontend-env` | `deployment/env/frontend.env.example` |
+| Credential ID (exact) | Template to copy |
+|-----------------------|------------------|
 | `vix-leads-backend-env` | `deployment/env/backend.env.example` |
+| `vix-leads-frontend-env` | `deployment/env/frontend.env.example` |
 
-1. Jenkins → Manage → Credentials → Add → **Secret file**
-2. Upload filled env files with the IDs above (exact spelling)
-3. Multibranch / Pipeline job on this repo; agent must run Docker
-4. Point nginx at `deployment/nginx/nginx.conf` (or equivalent) for the three hostnames
+### First-time setup
 
-## Pipeline shape
+1. Copy each `.example` file locally and replace `REPLACE_*` values:
+   - Backend: `DJANGO_SECRET_KEY`, `POSTGRES_PASSWORD` (and SMTP if you want real email)
+   - Frontend: confirm `NEXT_PUBLIC_API_URL` (HTTPS API domain preferred)
+2. Jenkins → **Manage Jenkins** → **Credentials** → **System** → **Global** → **Add Credentials**
+3. Kind = **Secret file**
+4. ID = exact strings above (pipeline reads these IDs)
+5. Upload the filled file → Save
 
-**One fullstack job only** — each run builds + deploys **backend then frontend** together (no separate FE/BE jobs, no change-detection skip).
+### Update later
 
-## Containers
+1. Credentials → find `vix-leads-backend-env` or `vix-leads-frontend-env`
+2. **Update** → upload the new file
+3. Re-run the pipeline (frontend API URL only applies after rebuild)
+
+### Required values checklist
+
+**Backend (`vix-leads-backend-env`)**
+
+| Key | Prod value |
+|-----|------------|
+| `DJANGO_SECRET_KEY` | long random (not the local one) |
+| `DJANGO_DEBUG` | `False` |
+| `DJANGO_ALLOWED_HOSTS` | `leads-api.internal.viximate.com,localhost,127.0.0.1` |
+| `POSTGRES_HOST` | `host.docker.internal` |
+| `POSTGRES_DB` / `USER` / `PASSWORD` | your host Postgres |
+| `MEDIA_ROOT` / `STATIC_ROOT` | `media` / `staticfiles` |
+
+**Frontend (`vix-leads-frontend-env`)**
+
+| Key | Prod value |
+|-----|------------|
+| `NEXT_PUBLIC_API_URL` | `https://leads-api.internal.viximate.com` |
+
+## Pipeline
+
+**One fullstack job** — each run builds + deploys backend then frontend.
 
 - Network: `vix-leads-net`
 - Images: `vix-leads-frontend`, `vix-leads-backend`
-- Backend reaches local DB via `POSTGRES_HOST=host.docker.internal`
+- Enable **GitHub hook trigger for GITScm polling** (webhook: `https://jenkins.viximate.com/github-webhook/`)
 
 ## Smoke
 
-- FE: `curl http://127.0.0.1:6018/`
-- BE: `curl http://127.0.0.1:6019/api/health/`
+```bash
+curl -fsS http://127.0.0.1:6019/api/health/
+curl -fsS http://127.0.0.1:6018/
+```
 
-## Go-live checklist
+## Go-live
 
-1. Fill Secret files (strong `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=False`)
-2. Ensure Postgres on the Jenkins host accepts connections from Docker
+1. Secret files filled (`DEBUG=False`, strong secret, real DB password)
+2. Postgres on host allows Docker (`pg_hba` / listen)
 3. DNS / hosts for the three domains → this server
-4. Run pipeline; confirm smoke green
-5. Change seed passwords after first login
+4. nginx from `deployment/nginx/nginx.conf`
+5. Run pipeline; smoke green
+6. Change seed passwords after first login
