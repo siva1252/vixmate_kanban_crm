@@ -129,7 +129,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (auth) {
     const access = getAccessToken();
-    if (access) headers.Authorization = `Bearer ${access}`;
+    if (!access) {
+      throw new ApiError("Not signed in.", 401);
+    }
+    headers.Authorization = `Bearer ${access}`;
   }
 
   const doFetch = () =>
@@ -140,25 +143,37 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       signal,
     });
 
-  let res = await doFetch();
-  if (res.status === 401 && auth) {
-    if (!refreshPromise) refreshPromise = refreshAccessToken().finally(() => {
-      refreshPromise = null;
-    });
-    const ok = await refreshPromise;
-    if (ok) {
-      const access = getAccessToken();
-      if (access) headers.Authorization = `Bearer ${access}`;
-      res = await doFetch();
+  try {
+    let res = await doFetch();
+    if (res.status === 401 && auth) {
+      if (!refreshPromise) {
+        refreshPromise = refreshAccessToken().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      const ok = await refreshPromise;
+      if (ok) {
+        const access = getAccessToken();
+        if (access) headers.Authorization = `Bearer ${access}`;
+        res = await doFetch();
+      }
     }
-  }
 
-  const json = (await res.json().catch(() => null)) as ApiEnvelope<T> | Record<string, unknown> | null;
-  if (!res.ok) {
-    throw new ApiError(messageFromPayload(json, `Request failed (${res.status})`), res.status, json);
+    const json = (await res.json().catch(() => null)) as ApiEnvelope<T> | Record<string, unknown> | null;
+    if (!res.ok) {
+      throw new ApiError(messageFromPayload(json, `Request failed (${res.status})`), res.status, json);
+    }
+    if (json && typeof json === "object" && "data" in json) {
+      return (json as ApiEnvelope<T>).data;
+    }
+    return json as T;
+  } catch (err) {
+    if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+      throw err;
+    }
+    if (err instanceof TypeError) {
+      throw new ApiError("Cannot reach API. Is the backend running?", 0);
+    }
+    throw err;
   }
-  if (json && typeof json === "object" && "data" in json) {
-    return (json as ApiEnvelope<T>).data;
-  }
-  return json as T;
 }

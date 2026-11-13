@@ -5,9 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { ReasonDialog } from "@/components/reason-dialog";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/toast";
 import { ApiError } from "@/lib/api";
+import { cacheGet } from "@/lib/api-cache";
 import { cn } from "@/lib/utils";
 import type { LeadSourcePerson } from "@/types";
 import {
@@ -65,11 +69,19 @@ function apiErrorMessage(err: unknown, fallback: string) {
 }
 
 export default function LeadSourcePage() {
-  const [people, setPeople] = useState<LeadSourcePersonRow[]>([]);
-  const [allPeopleOptions, setAllPeopleOptions] = useState<LeadSourcePersonRow[]>([]);
+  const [people, setPeople] = useState<LeadSourcePersonRow[]>(
+    () => cacheGet<LeadSourcePersonRow[]>("lead-source::active:::") ?? []
+  );
+  const [allPeopleOptions, setAllPeopleOptions] = useState<LeadSourcePersonRow[]>(
+    () => cacheGet<LeadSourcePersonRow[]>("lead-source::all:::") ?? []
+  );
   const [assignClients, setAssignClients] = useState<AssignClient[]>([]);
-  const [listLoading, setListLoading] = useState(true);
-  const [totalCount, setTotalCount] = useState(0);
+  const [listLoading, setListLoading] = useState(
+    () => !cacheGet("lead-source::active:::")
+  );
+  const [totalCount, setTotalCount] = useState(
+    () => (cacheGet<LeadSourcePersonRow[]>("lead-source::active:::") ?? []).length
+  );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [personAttributions, setPersonAttributions] = useState<PersonAttribution[]>([]);
@@ -95,7 +107,10 @@ export default function LeadSourcePage() {
   const [assignClientId, setAssignClientId] = useState("");
   const [assignPersonIds, setAssignPersonIds] = useState<string[]>([]);
   const [assignNote, setAssignNote] = useState("");
-  const [deactivateTarget, setDeactivateTarget] = useState<LeadSourcePerson | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<LeadSourcePersonRow | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState("");
+  const [deactivateLeadAction, setDeactivateLeadAction] = useState<"remove" | "keep">("keep");
+  const [deactivateError, setDeactivateError] = useState("");
   const [unlinkTarget, setUnlinkTarget] = useState<{
     attributionId: string;
     clientName: string;
@@ -121,7 +136,6 @@ export default function LeadSourcePage() {
   }, [assignedFilter]);
 
   const reloadList = useCallback(async (signal?: AbortSignal) => {
-    setListLoading(true);
     try {
       const rows = await fetchLeadSourcePeople(
         {
@@ -138,10 +152,8 @@ export default function LeadSourcePage() {
       setPeople(visible);
       setTotalCount(unfilteredLen);
     } catch (err) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       push(apiErrorMessage(err, "Failed to load Lead Source people"), "error");
-      setPeople([]);
-      setTotalCount(0);
     } finally {
       if (!signal?.aborted) setListLoading(false);
     }
@@ -159,13 +171,16 @@ export default function LeadSourcePage() {
       .then((rows) => {
         if (!ac.signal.aborted) setAllPeopleOptions(rows);
       })
-      .catch(() => {
-        if (!ac.signal.aborted) setAllPeopleOptions([]);
+      .catch((err) => {
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        setAllPeopleOptions([]);
       });
     return () => ac.abort();
   }, []);
 
+  // Load leads only when Assign modal opens — avoids extra /clients traffic on every page visit.
   useEffect(() => {
+    if (!assignOpen || assignClients.length > 0) return;
     const ac = new AbortController();
     void fetchClientsForAssign(ac.signal)
       .then((rows) => {
@@ -177,11 +192,12 @@ export default function LeadSourcePage() {
           }))
         );
       })
-      .catch(() => {
-        if (!ac.signal.aborted) setAssignClients([]);
+      .catch((err) => {
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        setAssignClients([]);
       });
     return () => ac.abort();
-  }, []);
+  }, [assignOpen, assignClients.length]);
 
   const personNameOptions = useMemo(() => {
     return [...allPeopleOptions]
@@ -307,12 +323,50 @@ export default function LeadSourcePage() {
     }
   };
 
-  const deactivatePerson = async (person: LeadSourcePerson, reason: string) => {
+  const openDeactivate = (person: LeadSourcePersonRow) => {
+    setDeactivateTarget(person);
+    setDeactivateReason("");
+    setDeactivateLeadAction("keep");
+    setDeactivateError("");
+  };
+
+  const closeDeactivate = () => {
+    if (saving) return;
+    setDeactivateTarget(null);
+    setDeactivateReason("");
+    setDeactivateError("");
+  };
+
+  const deactivatePerson = async () => {
+    if (!deactivateTarget || saving) return;
+    const reason = deactivateReason.trim();
+    if (reason.length < 3) {
+      setDeactivateError("Reason must be at least 3 characters.");
+      return;
+    }
+    const leadCount = deactivateTarget.leadCount ?? 0;
+    const unassign = leadCount > 0 && deactivateLeadAction === "remove";
     setSaving(true);
+    setDeactivateError("");
     try {
-      await updateLeadSourcePerson(person.id, { is_active: false, reason });
+      await updateLeadSourcePerson(deactivateTarget.id, {
+        is_active: false,
+        reason,
+        unassign_leads: unassign,
+      });
       setDeactivateTarget(null);
-      push("Person deactivated");
+      setDeactivateReason("");
+      if (unassign) {
+        push(
+          `Person deactivated — removed from ${leadCount} lead${leadCount === 1 ? "" : "s"}`
+        );
+      } else {
+        push(
+          leadCount > 0
+            ? "Person deactivated — lead links kept"
+            : "Person deactivated"
+        );
+      }
       await reloadList();
     } catch (err) {
       push(apiErrorMessage(err, "Failed to deactivate person"), "error");
@@ -399,7 +453,16 @@ export default function LeadSourcePage() {
   );
 
   return (
-    <div className="space-y-4 p-3 sm:p-4 md:p-6">
+    <div className="relative space-y-4 p-3 sm:p-4 md:p-6">
+      {saving ? (
+        <div
+          className="pointer-events-none absolute inset-x-3 top-3 z-20 h-0.5 overflow-hidden rounded-full bg-stone-200 sm:inset-x-4 md:inset-x-6 dark:bg-stone-800"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="h-full w-1/3 animate-pulse bg-teal-700" />
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-baseline gap-2">
@@ -526,9 +589,9 @@ export default function LeadSourcePage() {
       ) : null}
 
       {selected ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/40 p-0 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
           <div className="absolute inset-0" onClick={() => setSelectedId(null)} aria-hidden />
-          <div className="relative z-10 flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-stone-200 bg-white shadow-xl dark:border-stone-800 dark:bg-stone-950 sm:rounded-2xl">
+          <div className="relative z-10 flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-xl dark:border-stone-800 dark:bg-stone-950">
             <div className="flex items-start justify-between gap-3 border-b border-stone-200 p-4 dark:border-stone-800">
               <div className="flex items-center gap-3">
                 <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-stone-800 text-sm font-semibold text-white">
@@ -585,7 +648,7 @@ export default function LeadSourcePage() {
                   <Button
                     variant="outline"
                     className="flex-1"
-                    onClick={() => setDeactivateTarget(selected)}
+                    onClick={() => openDeactivate(selected)}
                     disabled={saving}
                   >
                     Deactivate
@@ -644,9 +707,9 @@ export default function LeadSourcePage() {
       ) : null}
 
       {createOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/40 p-0 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
           <div className="absolute inset-0" onClick={() => setCreateOpen(false)} aria-hidden />
-          <div className="relative z-10 w-full max-w-md space-y-3 rounded-t-2xl border border-stone-200 bg-white p-4 shadow-xl dark:border-stone-800 dark:bg-stone-950 sm:rounded-2xl">
+          <div className="relative z-10 max-h-[90dvh] w-full max-w-md space-y-3 overflow-y-auto rounded-2xl border border-stone-200 bg-white p-4 shadow-xl dark:border-stone-800 dark:bg-stone-950">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-xl">Add Lead Source person</h2>
               <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>
@@ -737,8 +800,8 @@ export default function LeadSourcePage() {
               >
                 Cancel
               </Button>
-              <Button onClick={() => void createPerson()} disabled={saving}>
-                Save
+              <Button onClick={() => void createPerson()} loading={saving}>
+                {saving ? "Saving…" : "Save"}
               </Button>
             </div>
           </div>
@@ -746,9 +809,9 @@ export default function LeadSourcePage() {
       ) : null}
 
       {assignOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/40 p-0 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
           <div className="absolute inset-0" onClick={() => setAssignOpen(false)} aria-hidden />
-          <div className="relative z-10 w-full max-w-md space-y-3 rounded-t-2xl border border-stone-200 bg-white p-4 shadow-xl dark:border-stone-800 dark:bg-stone-950 sm:rounded-2xl">
+          <div className="relative z-10 max-h-[90dvh] w-full max-w-md space-y-3 overflow-y-auto rounded-2xl border border-stone-200 bg-white p-4 shadow-xl dark:border-stone-800 dark:bg-stone-950">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-xl">Assign to lead</h2>
               <Button variant="ghost" size="sm" onClick={() => setAssignOpen(false)}>
@@ -808,25 +871,80 @@ export default function LeadSourcePage() {
               </Button>
               <Button
                 onClick={() => void saveAssign()}
-                disabled={!assignClientId || assignPersonIds.length === 0 || saving}
+                disabled={!assignClientId || assignPersonIds.length === 0}
+                loading={saving}
               >
-                Assign
+                {saving ? "Assigning…" : "Assign"}
               </Button>
             </div>
           </div>
         </div>
       ) : null}
 
-      <ReasonDialog
+      <Dialog
         open={Boolean(deactivateTarget)}
         title="Deactivate Lead Source person"
-        description="A reason is required. This is logged for audit."
-        onClose={() => setDeactivateTarget(null)}
-        onConfirm={(reason) => {
-          if (!deactivateTarget) return;
-          void deactivatePerson(deactivateTarget, reason);
-        }}
-      />
+        description={
+          deactivateTarget
+            ? `Deactivate “${deactivateTarget.displayName}”. A reason is required and logged.`
+            : "A reason is required and logged."
+        }
+        danger
+        busy={saving}
+        confirmLabel="Deactivate"
+        onClose={closeDeactivate}
+        onConfirm={() => void deactivatePerson()}
+      >
+        {(deactivateTarget?.leadCount ?? 0) > 0 ? (
+          <div className="mb-4 space-y-2 rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+            <p className="font-medium text-stone-800 dark:text-stone-100">
+              This person has {deactivateTarget?.leadCount} linked lead
+              {(deactivateTarget?.leadCount ?? 0) === 1 ? "" : "s"}.
+            </p>
+            <p className="text-stone-600 dark:text-stone-300">
+              Choose what to do with those lead links:
+            </p>
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="radio"
+                name="deactivate-leads"
+                className="mt-1"
+                checked={deactivateLeadAction === "remove"}
+                disabled={saving}
+                onChange={() => setDeactivateLeadAction("remove")}
+              />
+              <span>
+                <span className="font-medium">Remove</span> — unassign this person from all linked
+                leads
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="radio"
+                name="deactivate-leads"
+                className="mt-1"
+                checked={deactivateLeadAction === "keep"}
+                disabled={saving}
+                onChange={() => setDeactivateLeadAction("keep")}
+              />
+              <span>
+                <span className="font-medium">Keep</span> — leave lead links as they are
+              </span>
+            </label>
+          </div>
+        ) : null}
+        <Label htmlFor="deactivate-reason">Reason</Label>
+        <Textarea
+          id="deactivate-reason"
+          value={deactivateReason}
+          disabled={saving}
+          onChange={(e) => setDeactivateReason(e.target.value)}
+          placeholder="Why is this person being deactivated?"
+        />
+        {deactivateError ? (
+          <p className="mt-2 text-sm text-rose-700">{deactivateError}</p>
+        ) : null}
+      </Dialog>
       <ReasonDialog
         open={Boolean(unlinkTarget)}
         title="Unlink from lead"
@@ -835,7 +953,11 @@ export default function LeadSourcePage() {
             ? `Remove this person from “${unlinkTarget.clientName}”. Reason is required and logged.`
             : "Reason is required and logged."
         }
-        onClose={() => setUnlinkTarget(null)}
+        busy={saving}
+        onClose={() => {
+          if (saving) return;
+          setUnlinkTarget(null);
+        }}
         onConfirm={(reason) => {
           if (!unlinkTarget) return;
           void unlink(unlinkTarget.attributionId, reason);

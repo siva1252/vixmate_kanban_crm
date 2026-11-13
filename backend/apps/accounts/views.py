@@ -1,17 +1,32 @@
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 from apps.accounts import serializers as ser
 from apps.accounts.models import User
 from apps.accounts.services import auth as auth_services
+from common.permissions import IsActiveCRMMember
 from common.responses import success_response
+
+
+class AuthLoginThrottle(AnonRateThrottle):
+    scope = "auth_login"
+
+
+class AuthRefreshThrottle(AnonRateThrottle):
+    scope = "auth_refresh"
+
+
+class AuthOtpThrottle(AnonRateThrottle):
+    scope = "auth_otp"
 
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthLoginThrottle]
 
     @extend_schema(
         tags=["auth"],
@@ -54,6 +69,7 @@ class LoginView(APIView):
 class TokenRefreshView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthRefreshThrottle]
 
     @extend_schema(
         tags=["auth"],
@@ -91,7 +107,7 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveCRMMember]
 
     @extend_schema(tags=["auth"], summary="Current user", responses={200: ser.UserSerializer})
     def get(self, request):
@@ -108,6 +124,7 @@ class MeView(APIView):
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthOtpThrottle]
 
     @extend_schema(tags=["auth"], summary="Forgot password", request=ser.EmailSerializer)
     def post(self, request):
@@ -123,6 +140,7 @@ class ForgotPasswordView(APIView):
 class OTPVerifyView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthOtpThrottle]
 
     @extend_schema(tags=["auth"], summary="Verify OTP", request=ser.OTPVerifySerializer)
     def post(self, request):
@@ -140,6 +158,7 @@ class OTPVerifyView(APIView):
 class OTPResendView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthOtpThrottle]
 
     @extend_schema(tags=["auth"], summary="Resend OTP", request=ser.OTPResendSerializer)
     def post(self, request):
@@ -156,6 +175,7 @@ class OTPResendView(APIView):
 class PasswordResetView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthOtpThrottle]
 
     @extend_schema(tags=["auth"], summary="Reset password", request=ser.PasswordResetSerializer)
     def post(self, request):
@@ -194,6 +214,26 @@ class PasswordChangeConfirmView(APIView):
             request=request,
         )
         return success_response(message="Password changed successfully.")
+
+
+class PasswordChangeDirectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["auth"],
+        summary="Change password (current + new, no OTP)",
+        request=ser.PasswordChangeDirectSerializer,
+    )
+    def post(self, request):
+        serializer = ser.PasswordChangeDirectSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        auth_services.change_password_direct(
+            user=request.user,
+            current_password=serializer.validated_data["current_password"],
+            new_password=serializer.validated_data["new_password"],
+            request=request,
+        )
+        return success_response(message="Password updated.")
 
 
 class ActivateUserView(APIView):

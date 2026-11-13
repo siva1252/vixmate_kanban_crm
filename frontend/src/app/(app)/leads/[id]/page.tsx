@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Archive, Trash2 } from "lucide-react";
 import { ReasonDialog } from "@/components/reason-dialog";
 import { Button } from "@/components/ui/button";
@@ -10,22 +10,28 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  LEAD_SOURCES,
-  SERVICES,
-  STAGES,
   TEAM,
   attachments,
   comments,
   followups,
-  activities,
-  working,
   peopleForClient,
   pushActivity,
   uid,
 } from "@/mock-data/store";
-import { deleteClient, getClient, updateClient } from "@/mock-services/clients";
+import { deleteClient, getClient, updateClient } from "@/services/clients";
+import { fetchCrmConfig, type CrmConfig } from "@/services/configuration";
+import { fetchActivityLogs, type ActivityLogRow } from "@/services/activity";
+import { fetchTeamMembers } from "@/services/team";
+import {
+  assignWorking as apiAssignWorking,
+  fetchWorkingForClient,
+  removeWorking as apiRemoveWorking,
+  updateWorking as apiUpdateWorking,
+} from "@/services/working";
 import { getSession } from "@/mock-services/auth";
 import { useToast } from "@/components/toast";
+import { ApiError } from "@/lib/api";
+import { cacheGet } from "@/lib/api-cache";
 import {
   ATTACHMENT_ACCEPT,
   DOCUMENT_TYPES,
@@ -37,7 +43,13 @@ import {
 } from "@/lib/attachments";
 import { actionLabel, entityLabel, formatChangeSummary } from "@/lib/activity";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
-import type { AttachmentDocumentType, Client, LeadWorking } from "@/types";
+import type { AttachmentDocumentType, Client, LeadWorking, TeamMember } from "@/types";
+
+type WorkingRow = LeadWorking & {
+  memberName?: string;
+  assignedByName?: string;
+  updatedByName?: string;
+};
 
 type TabId = "Details" | "Comments" | "History" | "Follow-ups" | "Docs" | "Working";
 
@@ -133,13 +145,64 @@ export default function LeadDetailPage() {
   const [workingEditReason, setWorkingEditReason] = useState("");
   const [workingEditReasonOpen, setWorkingEditReasonOpen] = useState(false);
   const [workingEditUnlocked, setWorkingEditUnlocked] = useState(false);
-  const [workingRemoveRow, setWorkingRemoveRow] = useState<LeadWorking | null>(null);
+  const [workingRemoveRow, setWorkingRemoveRow] = useState<WorkingRow | null>(null);
+  const [client, setClient] = useState<Client | null>(() =>
+    cacheGet<Client>(`clients:detail:${params.id}`)
+  );
+  const [config, setConfig] = useState<CrmConfig | null>(() => cacheGet<CrmConfig>("config:bundle"));
+  const [leadHistory, setLeadHistory] = useState<ActivityLogRow[]>(
+    () => cacheGet<ActivityLogRow[]>(`activity::::${params.id}:::1:100`) ?? []
+  );
+  const [teamRoster, setTeamRoster] = useState<TeamMember[]>(
+    () => (cacheGet<TeamMember[]>("team:list") ?? []).filter((t) => t.isActive)
+  );
+  const [leadWorking, setLeadWorking] = useState<WorkingRow[]>(
+    () => (cacheGet<WorkingRow[]>(`working:client:${params.id}`) ?? []).filter((w) => w.isActive)
+  );
+  const [pageLoading, setPageLoading] = useState(
+    () => !cacheGet(`clients:detail:${params.id}`)
+  );
+  const [saving, setSaving] = useState(false);
+  const hasLoadedRef = useRef(Boolean(cacheGet(`clients:detail:${params.id}`)));
+
+  const LEAD_SOURCES = config?.leadSources ?? [];
+  const SERVICES = config?.services ?? [];
+  const STAGES = config?.stages ?? [];
 
   useEffect(() => {
     setTab(resolveTab(searchParams.get("tab")));
   }, [searchParams]);
 
-  const client = useMemo(() => getClient(params.id), [params.id, tick]);
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      // Full-page loader only on first load — soft refresh after actions avoids UI shake.
+      if (!hasLoadedRef.current) setPageLoading(true);
+      try {
+        const [c, cfg, history, team, wk] = await Promise.all([
+          getClient(params.id, ac.signal),
+          fetchCrmConfig(ac.signal),
+          fetchActivityLogs({ client: params.id, page_size: 100 }, ac.signal),
+          fetchTeamMembers(ac.signal),
+          fetchWorkingForClient(params.id, ac.signal),
+        ]);
+        if (ac.signal.aborted) return;
+        setClient(c);
+        setConfig(cfg);
+        setLeadHistory(history);
+        setTeamRoster(team.filter((t) => t.isActive));
+        setLeadWorking(wk.filter((w) => w.isActive));
+        hasLoadedRef.current = true;
+      } catch (err) {
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        setClient(null);
+        push(err instanceof ApiError ? err.message : "Failed to load lead", "error");
+      } finally {
+        if (!ac.signal.aborted) setPageLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [params.id, tick, push]);
 
   const resetDocForm = () => {
     setDocType("proposal");
@@ -172,6 +235,10 @@ export default function LeadDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
 
+  if (pageLoading) {
+    return <p className="p-6 text-stone-500">Loading lead…</p>;
+  }
+
   if (!client || !form) {
     return <p className="p-6">Lead not found.</p>;
   }
@@ -186,12 +253,12 @@ export default function LeadDetailPage() {
   const serviceAllowsOther = Boolean(serviceMeta?.allowsOtherText);
   const leadFollowups = followups.filter((f) => f.clientId === client.id);
   const leadComments = comments.filter((c) => c.clientId === client.id);
-  const leadHistory = activities.filter((a) => a.clientId === client.id);
   const leadDocs = attachments.filter((a) => a.clientId === client.id);
-  const leadWorking = working.filter((w) => w.clientId === client.id && w.isActive);
   const firstCallYes = form.firstCallCompleted === true;
   const locked = !editing;
-  const assignableMembers = TEAM.filter(
+  const memberById = (id: string) =>
+    teamRoster.find((t) => t.id === id) || TEAM.find((t) => t.id === id);
+  const assignableMembers = teamRoster.filter(
     (t) => t.isActive && !leadWorking.some((w) => w.teamMemberId === t.id)
   );
 
@@ -321,7 +388,11 @@ export default function LeadDetailPage() {
 
     try {
       const customFields = buildCustomFields();
-      updateClient(
+      void customFields;
+      setSaving(true);
+      const stageChanged = Boolean(form.stageId && form.stageId !== client.stageId);
+      const firstCallNow = Boolean(form.firstCallCompleted) && !client.firstCallCompleted;
+      await updateClient(
         client.id,
         {
           clientName: form.clientName?.trim(),
@@ -333,8 +404,8 @@ export default function LeadDetailPage() {
           leadSourceOther: form.leadSourceOther,
           serviceId: form.serviceId,
           serviceOther: form.serviceOther,
-          stageId: form.stageId,
-          firstCallCompleted: Boolean(form.firstCallCompleted),
+          stageId: stageChanged ? form.stageId : undefined,
+          firstCallCompleted: firstCallNow ? true : undefined,
           clientRequirements: form.clientRequirements,
           firstCallNotes: form.firstCallNotes,
           decisionMakerPhone: form.decisionMakerPhone || undefined,
@@ -342,9 +413,7 @@ export default function LeadDetailPage() {
           estimatedDealValue: budgetConfirmed === "yes" ? form.estimatedDealValue : undefined,
           nextFollowUpDate: followUpNeeded === "yes" ? form.nextFollowUpDate : undefined,
           callDiscussionNotes: form.callDiscussionNotes,
-          customFields,
         },
-        session.teamMemberId,
         editReason
       );
 
@@ -396,12 +465,14 @@ export default function LeadDetailPage() {
         setEditReasonOpen(true);
         return;
       }
-      push(err instanceof Error ? err.message : "Update failed", "error");
+      push(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Update failed", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
   const saveDocFromDocsTab = async () => {
-    if (!session) return;
+    if (!session || saving) return;
     if (!docTitle.trim()) {
       push("Enter a document name", "error");
       return;
@@ -414,12 +485,17 @@ export default function LeadDetailPage() {
       push("Upload a file (PDF, DOC, or DOCX, under 5 MB)", "error");
       return;
     }
-    const ok = await attachPendingDoc();
-    if (!ok) return;
-    setAttachOpen(false);
-    resetDocForm();
-    setTick((t) => t + 1);
-    push("Document attached");
+    setSaving(true);
+    try {
+      const ok = await attachPendingDoc();
+      if (!ok) return;
+      setAttachOpen(false);
+      resetDocForm();
+      setTick((t) => t + 1);
+      push("Document attached");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const resetAssignForm = () => {
@@ -435,8 +511,8 @@ export default function LeadDetailPage() {
     setWorkingEditUnlocked(false);
   };
 
-  const assignWorking = () => {
-    if (!session) return;
+  const assignWorking = async () => {
+    if (!session || saving) return;
     if (!assignMemberId) {
       push("Select a team member", "error");
       return;
@@ -445,42 +521,30 @@ export default function LeadDetailPage() {
       push("Enter what they are working on", "error");
       return;
     }
-    if (working.some((w) => w.clientId === client.id && w.teamMemberId === assignMemberId && w.isActive)) {
+    if (leadWorking.some((w) => w.teamMemberId === assignMemberId)) {
       push("That team member is already working on this lead", "error");
       return;
     }
-    const stamp = new Date().toISOString();
-    const id = uid("wk");
-    const memberName = TEAM.find((t) => t.id === assignMemberId)?.displayName ?? "Member";
-    working.unshift({
-      id,
-      clientId: client.id,
-      teamMemberId: assignMemberId,
-      workNote: assignNote.trim(),
-      assignedById: session.teamMemberId,
-      assignedAt: stamp,
-      updatedAt: stamp,
-      isActive: true,
-    });
-    pushActivity({
-      actorId: session.teamMemberId,
-      action: "working_assigned",
-      entityType: "LeadWorking",
-      entityId: id,
-      clientId: client.id,
-      newValues: {
-        teamMemberId: assignMemberId,
-        teamMemberName: memberName,
-        workNote: assignNote.trim(),
-      },
-    });
-    setAssignOpen(false);
-    resetAssignForm();
-    setTick((t) => t + 1);
-    push(`${memberName} assigned to this lead`);
+    const memberName = memberById(assignMemberId)?.displayName ?? "Member";
+    setSaving(true);
+    try {
+      await apiAssignWorking({
+        client: client.id,
+        team_member: assignMemberId,
+        work_note: assignNote.trim(),
+      });
+      setAssignOpen(false);
+      resetAssignForm();
+      setTick((t) => t + 1);
+      push(`${memberName} assigned to this lead`);
+    } catch (err) {
+      push(err instanceof ApiError ? err.message : "Failed to assign member", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const startWorkingEdit = (row: LeadWorking) => {
+  const startWorkingEdit = (row: WorkingRow) => {
     setWorkingEditId(row.id);
     setWorkingEditNote(row.workNote);
     setWorkingEditMemberId(row.teamMemberId);
@@ -489,8 +553,8 @@ export default function LeadDetailPage() {
     setWorkingEditReasonOpen(true);
   };
 
-  const saveWorkingEdit = () => {
-    if (!session || !workingEditId) return;
+  const saveWorkingEdit = async () => {
+    if (!session || !workingEditId || saving) return;
     if (!workingEditReason.trim()) {
       setWorkingEditReasonOpen(true);
       return;
@@ -503,71 +567,52 @@ export default function LeadDetailPage() {
       push("Select a team member", "error");
       return;
     }
-    const idx = working.findIndex((w) => w.id === workingEditId);
-    if (idx < 0) return;
-    const current = working[idx];
-    const duplicate = working.some(
+    const duplicate = leadWorking.some(
       (w) =>
         w.id !== workingEditId &&
-        w.clientId === client.id &&
-        w.teamMemberId === workingEditMemberId &&
-        w.isActive
+        w.teamMemberId === workingEditMemberId
     );
     if (duplicate) {
       push("That team member is already working on this lead", "error");
       return;
     }
-    const prevMember = TEAM.find((t) => t.id === current.teamMemberId)?.displayName ?? "Member";
-    const nextMember = TEAM.find((t) => t.id === workingEditMemberId)?.displayName ?? "Member";
-    working[idx] = {
-      ...current,
-      teamMemberId: workingEditMemberId,
-      workNote: workingEditNote.trim(),
-      updatedById: session.teamMemberId,
-      updatedAt: new Date().toISOString(),
-    };
-    pushActivity({
-      actorId: session.teamMemberId,
-      action: "working_updated",
-      entityType: "LeadWorking",
-      entityId: workingEditId,
-      clientId: client.id,
-      reason: workingEditReason.trim(),
-      oldValues: {
-        teamMemberId: current.teamMemberId,
-        teamMemberName: prevMember,
-        workNote: current.workNote,
-      },
-      newValues: {
-        teamMemberId: workingEditMemberId,
-        teamMemberName: nextMember,
-        workNote: workingEditNote.trim(),
-      },
-    });
-    cancelWorkingEdit();
-    setTick((t) => t + 1);
-    push("Working assignment updated");
+    setSaving(true);
+    try {
+      await apiUpdateWorking(
+        workingEditId,
+        {
+          team_member: workingEditMemberId,
+          work_note: workingEditNote.trim(),
+          reason: workingEditReason.trim(),
+        },
+        client.id
+      );
+      cancelWorkingEdit();
+      setTick((t) => t + 1);
+      push("Working assignment updated");
+    } catch (err) {
+      push(err instanceof ApiError ? err.message : "Failed to update working", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const removeWorking = (row: LeadWorking, reason: string) => {
-    if (!session) return;
-    const idx = working.findIndex((w) => w.id === row.id);
-    if (idx < 0) return;
-    const memberName = TEAM.find((t) => t.id === row.teamMemberId)?.displayName ?? "Member";
-    working[idx] = { ...working[idx], isActive: false, updatedById: session.teamMemberId, updatedAt: new Date().toISOString() };
-    pushActivity({
-      actorId: session.teamMemberId,
-      action: "working_removed",
-      entityType: "LeadWorking",
-      entityId: row.id,
-      clientId: client.id,
-      reason,
-      oldValues: { teamMemberName: memberName, workNote: row.workNote },
-      newValues: { isActive: false },
-    });
-    if (workingEditId === row.id) cancelWorkingEdit();
-    setTick((t) => t + 1);
-    push(`${memberName} removed from this lead`);
+  const removeWorking = async (row: WorkingRow, reason: string) => {
+    if (!session || saving) return;
+    const memberName =
+      row.memberName || memberById(row.teamMemberId)?.displayName || "Member";
+    setSaving(true);
+    try {
+      await apiRemoveWorking(row.id, reason, client.id);
+      if (workingEditId === row.id) cancelWorkingEdit();
+      setWorkingRemoveRow(null);
+      setTick((t) => t + 1);
+      push(`${memberName} removed from this lead`);
+    } catch (err) {
+      push(err instanceof ApiError ? err.message : "Failed to remove member", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const onDocFileChange = (
@@ -658,7 +703,16 @@ export default function LeadDetailPage() {
   );
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col p-3 sm:p-4 md:p-6">
+    <div className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col p-3 sm:p-4 md:p-6">
+      {saving ? (
+        <div
+          className="pointer-events-none absolute inset-x-3 top-3 z-20 h-0.5 overflow-hidden rounded-full bg-stone-200 sm:inset-x-4 md:inset-x-6 dark:bg-stone-800"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="h-full w-1/3 animate-pulse bg-teal-700" />
+        </div>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm text-stone-500">
@@ -1069,8 +1123,10 @@ export default function LeadDetailPage() {
             <div className="flex flex-wrap gap-2 border-t border-stone-200 pt-4 dark:border-stone-800">
               {editing ? (
                 <>
-                  <Button onClick={() => void saveDetails()}>Save</Button>
-                  <Button variant="outline" onClick={cancelEdit}>
+                  <Button onClick={() => void saveDetails()} loading={saving}>
+                    {saving ? "Saving…" : "Save"}
+                  </Button>
+                  <Button variant="outline" onClick={cancelEdit} disabled={saving}>
                     Cancel
                   </Button>
                 </>
@@ -1078,6 +1134,7 @@ export default function LeadDetailPage() {
                 <>
                   <Button
                     variant="outline"
+                    disabled={saving}
                     onClick={() => {
                       setTab("Details");
                       setEditReasonOpen(true);
@@ -1085,11 +1142,11 @@ export default function LeadDetailPage() {
                   >
                     Edit
                   </Button>
-                  <Button variant="outline" onClick={() => setArchiveOpen(true)}>
+                  <Button variant="outline" onClick={() => setArchiveOpen(true)} disabled={saving}>
                     <Archive className="h-4 w-4" />
                     Archive
                   </Button>
-                  <Button variant="danger" onClick={() => setDeleteOpen(true)}>
+                  <Button variant="danger" onClick={() => setDeleteOpen(true)} disabled={saving}>
                     <Trash2 className="h-4 w-4" />
                     Delete
                   </Button>
@@ -1108,68 +1165,33 @@ export default function LeadDetailPage() {
               </p>
               <Button
                 variant="outline"
+                disabled={saving}
                 onClick={() => {
-                  if (assignOpen) {
-                    setAssignOpen(false);
-                    resetAssignForm();
-                    return;
-                  }
                   cancelWorkingEdit();
                   resetAssignForm();
                   setAssignOpen(true);
                 }}
               >
-                {assignOpen ? "Close form" : "Assign member"}
+                Assign member
               </Button>
             </div>
 
-            {assignOpen ? (
-              <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-900 dark:bg-teal-950/20">
-                <h2 className="font-medium">Assign team member</h2>
-                <Field label="Team member">
-                  <select
-                    className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm dark:border-stone-700 dark:bg-stone-900"
-                    value={assignMemberId}
-                    onChange={(e) => setAssignMemberId(e.target.value)}
-                  >
-                    <option value="">Select member…</option>
-                    {assignableMembers.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.displayName} · {m.jobTitle}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="What are they working on?">
-                  <Textarea
-                    placeholder="Short note — e.g. preparing proposal, client follow-up, technical scope"
-                    value={assignNote}
-                    onChange={(e) => setAssignNote(e.target.value)}
-                  />
-                </Field>
-                <div className="flex gap-2">
-                  <Button onClick={assignWorking}>Assign</Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setAssignOpen(false);
-                      resetAssignForm();
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
             <ul className="space-y-2">
               {leadWorking.map((row) => {
-                const member = TEAM.find((t) => t.id === row.teamMemberId);
-                const assignedBy = TEAM.find((t) => t.id === row.assignedById);
-                const updatedBy = row.updatedById
-                  ? TEAM.find((t) => t.id === row.updatedById)
-                  : null;
+                const member = memberById(row.teamMemberId);
+                const memberName = row.memberName || member?.displayName || "Team member";
+                const assignedByName =
+                  row.assignedByName || memberById(row.assignedById)?.displayName || "—";
+                const updatedByName =
+                  row.updatedByName ||
+                  (row.updatedById ? memberById(row.updatedById)?.displayName : undefined);
                 const isEditingRow = workingEditId === row.id && workingEditUnlocked;
+                const editOptions = teamRoster.filter(
+                  (t) =>
+                    t.isActive &&
+                    (t.id === row.teamMemberId ||
+                      !leadWorking.some((w) => w.teamMemberId === t.id))
+                );
                 return (
                   <li
                     key={row.id}
@@ -1185,10 +1207,12 @@ export default function LeadDetailPage() {
                             className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm dark:border-stone-700 dark:bg-stone-900"
                             value={workingEditMemberId}
                             onChange={(e) => setWorkingEditMemberId(e.target.value)}
+                            disabled={saving}
                           >
-                            {TEAM.filter((t) => t.isActive).map((m) => (
+                            {editOptions.map((m) => (
                               <option key={m.id} value={m.id}>
-                                {m.displayName} · {m.jobTitle}
+                                {m.displayName}
+                                {m.jobTitle ? ` · ${m.jobTitle}` : ""}
                               </option>
                             ))}
                           </select>
@@ -1198,11 +1222,14 @@ export default function LeadDetailPage() {
                             placeholder="Update the work note"
                             value={workingEditNote}
                             onChange={(e) => setWorkingEditNote(e.target.value)}
+                            disabled={saving}
                           />
                         </Field>
                         <div className="flex flex-wrap gap-2">
-                          <Button onClick={saveWorkingEdit}>Save</Button>
-                          <Button variant="outline" onClick={cancelWorkingEdit}>
+                          <Button onClick={() => void saveWorkingEdit()} loading={saving}>
+                            {saving ? "Saving…" : "Save"}
+                          </Button>
+                          <Button variant="outline" onClick={cancelWorkingEdit} disabled={saving}>
                             Cancel
                           </Button>
                         </div>
@@ -1211,19 +1238,25 @@ export default function LeadDetailPage() {
                       <>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="font-medium">{member?.displayName ?? "Unknown member"}</p>
+                            <p className="font-medium">{memberName}</p>
                             <p className="mt-0.5 text-xs text-stone-500">
-                              {member?.jobTitle ?? "Team"} · Assigned by{" "}
-                              {assignedBy?.displayName ?? "—"} · {formatDateTime(row.assignedAt)}
+                              {member?.jobTitle || "Team"} · Assigned by {assignedByName} ·{" "}
+                              {formatDateTime(row.assignedAt)}
                             </p>
                           </div>
                           <div className="flex shrink-0 gap-2">
-                            <Button size="sm" variant="outline" onClick={() => startWorkingEdit(row)}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={saving}
+                              onClick={() => startWorkingEdit(row)}
+                            >
                               Edit
                             </Button>
                             <Button
                               size="sm"
                               variant="danger"
+                              disabled={saving}
                               onClick={() => setWorkingRemoveRow(row)}
                             >
                               Remove
@@ -1234,9 +1267,9 @@ export default function LeadDetailPage() {
                           <span className="font-medium text-stone-500">Working on: </span>
                           {row.workNote}
                         </p>
-                        {updatedBy ? (
+                        {updatedByName ? (
                           <p className="mt-1 text-xs text-stone-500">
-                            Last edited by {updatedBy.displayName} · {formatDateTime(row.updatedAt)}
+                            Last edited by {updatedByName} · {formatDateTime(row.updatedAt)}
                           </p>
                         ) : null}
                       </>
@@ -1259,7 +1292,7 @@ export default function LeadDetailPage() {
               <div key={c.id} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800">
                 <p className="text-sm">{c.body}</p>
                 <p className="mt-2 text-xs text-stone-500">
-                  {TEAM.find((t) => t.id === c.authorId)?.displayName ?? "Team"} ·{" "}
+                  {memberById(c.authorId)?.displayName ?? "Team"} ·{" "}
                   {formatDateTime(c.createdAt)}
                 </p>
               </div>
@@ -1309,7 +1342,11 @@ export default function LeadDetailPage() {
         {tab === "History" ? (
           <ul className="space-y-2">
             {leadHistory.map((a) => {
-              const changes = formatChangeSummary(a.oldValues, a.newValues);
+              const changes = formatChangeSummary(
+                a.old_values ?? undefined,
+                a.new_values ?? undefined,
+                a.action
+              );
               return (
                 <li
                   key={a.id}
@@ -1317,8 +1354,8 @@ export default function LeadDetailPage() {
                 >
                   <p className="font-medium">{actionLabel(a.action)}</p>
                   <p className="mt-0.5 text-xs text-stone-500">
-                    {TEAM.find((t) => t.id === a.actorId)?.displayName ?? "System"} ·{" "}
-                    {formatDateTime(a.timestamp)} · {entityLabel(a.entityType)}
+                    {a.actor_name || "System"} · {formatDateTime(a.timestamp)} ·{" "}
+                    {entityLabel(a.entity_type)}
                   </p>
                   {a.reason ? (
                     <p className="mt-1 text-xs text-stone-600 dark:text-stone-300">
@@ -1390,37 +1427,15 @@ export default function LeadDetailPage() {
               <p className="text-sm text-stone-500">Documents linked to this lead.</p>
               <Button
                 variant="outline"
+                disabled={saving}
                 onClick={() => {
-                  if (attachOpen) {
-                    setAttachOpen(false);
-                    resetDocForm();
-                    return;
-                  }
                   resetDocForm();
                   setAttachOpen(true);
                 }}
               >
-                {attachOpen ? "Close form" : "Attach document"}
+                Attach document
               </Button>
             </div>
-
-            {attachOpen ? (
-              <div className="space-y-3">
-                {renderDocFields(docFileRef, false)}
-                <div className="flex gap-2">
-                  <Button onClick={() => void saveDocFromDocsTab()}>Save document</Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setAttachOpen(false);
-                      resetDocForm();
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : null}
 
             <ul className="space-y-2">
               {leadDocs.map((a) => {
@@ -1441,7 +1456,7 @@ export default function LeadDetailPage() {
                     </div>
                     <p className="mt-1 text-xs text-stone-500">
                       {a.originalFilename} · {(a.fileSize / 1024).toFixed(1)} KB ·{" "}
-                      {TEAM.find((t) => t.id === a.uploadedById)?.displayName ?? "—"} ·{" "}
+                      {memberById(a.uploadedById)?.displayName ?? "—"} ·{" "}
                       {formatDateTime(a.uploadedAt)}
                     </p>
                     {a.description ? (
@@ -1484,25 +1499,133 @@ export default function LeadDetailPage() {
         ) : null}
       </div>
 
+      {assignOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
+          <div
+            className="absolute inset-0"
+            onClick={() => {
+              if (saving) return;
+              setAssignOpen(false);
+              resetAssignForm();
+            }}
+            aria-hidden
+          />
+          <div className="relative z-10 max-h-[90dvh] w-full max-w-md space-y-3 overflow-y-auto rounded-2xl border border-stone-200 bg-white p-5 shadow-xl dark:border-stone-800 dark:bg-stone-950">
+            <h2 className="font-display text-xl">Assign team member</h2>
+            <Field label="Team member">
+              <select
+                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm dark:border-stone-700 dark:bg-stone-900"
+                value={assignMemberId}
+                onChange={(e) => setAssignMemberId(e.target.value)}
+                disabled={saving}
+              >
+                <option value="">Select member…</option>
+                {assignableMembers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.displayName}
+                    {m.jobTitle ? ` · ${m.jobTitle}` : ""}
+                  </option>
+                ))}
+              </select>
+              {teamRoster.length === 0 ? (
+                <p className="mt-1 text-xs text-amber-700">No team members loaded. Refresh the page.</p>
+              ) : null}
+            </Field>
+            <Field label="What are they working on?">
+              <Textarea
+                placeholder="Short note — e.g. preparing proposal, client follow-up, technical scope"
+                value={assignNote}
+                onChange={(e) => setAssignNote(e.target.value)}
+                disabled={saving}
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                variant="outline"
+                disabled={saving}
+                onClick={() => {
+                  setAssignOpen(false);
+                  resetAssignForm();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={() => void assignWorking()} loading={saving}>
+                {saving ? "Assigning…" : "Assign"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {attachOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
+          <div
+            className="absolute inset-0"
+            onClick={() => {
+              if (saving) return;
+              setAttachOpen(false);
+              resetDocForm();
+            }}
+            aria-hidden
+          />
+          <div className="relative z-10 max-h-[90dvh] w-full max-w-lg space-y-3 overflow-y-auto rounded-2xl border border-stone-200 bg-white p-5 shadow-xl dark:border-stone-800 dark:bg-stone-950">
+            <h2 className="font-display text-xl">Attach document</h2>
+            {renderDocFields(docFileRef, saving)}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                variant="outline"
+                disabled={saving}
+                onClick={() => {
+                  setAttachOpen(false);
+                  resetDocForm();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button loading={saving} onClick={() => void saveDocFromDocsTab()}>
+                {saving ? "Saving…" : "Save document"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <ReasonDialog
         open={deleteOpen}
         title="Delete client"
         description="A reason is mandatory for client deletion."
-        onClose={() => setDeleteOpen(false)}
+        busy={saving}
+        onClose={() => {
+          if (saving) return;
+          setDeleteOpen(false);
+        }}
         onConfirm={(reason) => {
-          if (!session) return;
-          deleteClient(client.id, session.teamMemberId, reason);
-          push("Client deleted");
-          router.push("/boards");
+          if (!session || saving) return;
+          void (async () => {
+            setSaving(true);
+            try {
+              await deleteClient(client.id, reason);
+              push("Client deleted");
+              router.push("/boards");
+            } catch (err) {
+              push(err instanceof ApiError ? err.message : "Delete failed", "error");
+              setSaving(false);
+            }
+          })();
         }}
       />
       <ReasonDialog
         open={archiveOpen}
         title="Archive lead"
         description="A reason is required to archive this lead."
-        onClose={() => setArchiveOpen(false)}
+        busy={saving}
+        onClose={() => {
+          if (saving) return;
+          setArchiveOpen(false);
+        }}
         onConfirm={(reason) => {
-          if (!session) return;
+          if (!session || saving) return;
           pushActivity({
             actorId: session.teamMemberId,
             action: "client_updated",
@@ -1549,11 +1672,14 @@ export default function LeadDetailPage() {
         open={Boolean(workingRemoveRow)}
         title="Remove from working"
         description="A reason is required to remove this team member from the lead."
-        onClose={() => setWorkingRemoveRow(null)}
+        busy={saving}
+        onClose={() => {
+          if (saving) return;
+          setWorkingRemoveRow(null);
+        }}
         onConfirm={(reason) => {
           if (!workingRemoveRow) return;
-          removeWorking(workingRemoveRow, reason);
-          setWorkingRemoveRow(null);
+          void removeWorking(workingRemoveRow, reason);
         }}
       />
     </div>

@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api";
+import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
 
 export type ActivityLogRow = {
   id: string;
@@ -21,17 +22,32 @@ export type ActivityLogRow = {
 export type ActivityQuery = {
   search?: string;
   team_member?: string;
+  client?: string;
   action?: string;
   entity_type?: string;
   page?: number;
   page_size?: number;
 };
 
-export async function fetchActivityLogs(query: ActivityQuery = {}, signal?: AbortSignal) {
-  return apiRequest<ActivityLogRow[]>("/api/activity/", {
+function activityCacheKey(query: ActivityQuery) {
+  return `activity:${query.search || ""}:${query.team_member || ""}:${query.client || ""}:${query.action || ""}:${query.entity_type || ""}:${query.page ?? 1}:${query.page_size ?? 100}`;
+}
+
+export async function fetchActivityLogs(
+  query: ActivityQuery = {},
+  signal?: AbortSignal,
+  opts?: { force?: boolean }
+) {
+  const key = activityCacheKey(query);
+  if (!opts?.force) {
+    const cached = cacheGet<ActivityLogRow[]>(key);
+    if (cached) return cached;
+  }
+  const rows = await apiRequest<ActivityLogRow[]>("/api/activity/", {
     query: {
       search: query.search,
       team_member: query.team_member,
+      client: query.client,
       action: query.action,
       entity_type: query.entity_type,
       page: query.page ?? 1,
@@ -39,4 +55,11 @@ export async function fetchActivityLogs(query: ActivityQuery = {}, signal?: Abor
     },
     signal,
   });
+  const data = Array.isArray(rows) ? rows : [];
+  cacheSet(key, data);
+  return data;
+}
+
+export function invalidateActivityCache() {
+  cacheInvalidate("activity:");
 }

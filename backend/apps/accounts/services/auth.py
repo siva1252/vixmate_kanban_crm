@@ -177,10 +177,11 @@ def login_user(*, email: str, password: str, request=None) -> tuple[User, dict]:
             description="Account temporarily locked",
             request=request,
         )
-        raise LoginFailed("Account is temporarily locked. Try again later.")
+        # Opaque to callers — same family of failure as bad credentials.
+        _fail()
 
     if not user.is_active:
-        _fail("Account is inactive.")
+        _fail()
 
     if not user.check_password(password):
         user.failed_login_attempts += 1
@@ -216,6 +217,21 @@ def refresh_tokens(*, refresh: str) -> dict:
     except TokenError as exc:
         raise ValidationError({"refresh": "Invalid or expired refresh token."}) from exc
 
+    user_id = token.get("user_id")
+    user = User.objects.filter(id=user_id).first() if user_id else None
+    if not user or not user.is_active:
+        try:
+            token.blacklist()
+        except Exception:
+            pass
+        raise ValidationError({"refresh": "Invalid or expired refresh token."})
+    if hasattr(user, "team_member") and not user.team_member.is_active and not user.is_staff:
+        try:
+            token.blacklist()
+        except Exception:
+            pass
+        raise ValidationError({"refresh": "Invalid or expired refresh token."})
+
     # ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION are handled by simplejwt settings
     # when using the built-in serializer; mirror that behavior here.
     data = {
@@ -236,6 +252,21 @@ def refresh_tokens(*, refresh: str) -> dict:
     else:
         data["refresh"] = str(token)
     return data
+
+
+def blacklist_user_tokens(*, user: User) -> int:
+    """Invalidate all outstanding refresh tokens for a user (e.g. on deactivate)."""
+    from rest_framework_simplejwt.token_blacklist.models import (
+        BlacklistedToken,
+        OutstandingToken,
+    )
+
+    count = 0
+    for outstanding in OutstandingToken.objects.filter(user=user):
+        _, created = BlacklistedToken.objects.get_or_create(token=outstanding)
+        if created:
+            count += 1
+    return count
 
 
 @transaction.atomic
@@ -447,6 +478,31 @@ def change_password_confirm(
 
 
 @transaction.atomic
+def change_password_direct(
+    *,
+    user: User,
+    current_password: str,
+    new_password: str,
+    request=None,
+) -> None:
+    """Change password while signed in using current password only (no OTP)."""
+    if not user.check_password(current_password):
+        raise ValidationError({"current_password": "Current password is incorrect."})
+    if current_password == new_password:
+        raise ValidationError({"new_password": "New password must be different from the current password."})
+    user.set_password(new_password)
+    user.save(update_fields=["password", "updated_at"])
+    write_audit_log(
+        actor=user,
+        action="password_changed",
+        entity_type="User",
+        entity_id=user.id,
+        description="Password changed with current password verification",
+        request=request,
+    )
+
+
+@transaction.atomic
 def activate_user(*, actor: User, user: User, request=None) -> User:
     if not actor.is_staff:
         raise PermissionDenied("Only technical administrators can activate accounts.")
@@ -477,12 +533,13 @@ def deactivate_user(*, actor: User, user: User, request=None) -> User:
     if hasattr(user, "team_member"):
         user.team_member.is_active = False
         user.team_member.save(update_fields=["is_active", "updated_at"])
+    blacklisted = blacklist_user_tokens(user=user)
     write_audit_log(
         actor=actor,
         action="user_deactivated",
         entity_type="User",
         entity_id=user.id,
-        description=f"Deactivated {user.email}",
+        description=f"Deactivated {user.email} (blacklisted {blacklisted} refresh token(s))",
         request=request,
     )
     return user

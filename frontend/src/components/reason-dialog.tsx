@@ -9,11 +9,12 @@ type Props = {
   open: boolean;
   title: string;
   description?: string;
+  busy?: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
 };
 
-export function ReasonDialog({ open, title, description, onClose, onConfirm }: Props) {
+export function ReasonDialog({ open, title, description, busy = false, onClose, onConfirm }: Props) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
@@ -23,13 +24,16 @@ export function ReasonDialog({ open, title, description, onClose, onConfirm }: P
       title={title}
       description={description}
       danger
+      busy={busy}
       confirmLabel="Confirm with reason"
       onClose={() => {
+        if (busy) return;
         setReason("");
         setError("");
         onClose();
       }}
       onConfirm={() => {
+        if (busy) return;
         if (reason.trim().length < 3) {
           setError("Reason must be at least 3 characters.");
           return;
@@ -45,6 +49,7 @@ export function ReasonDialog({ open, title, description, onClose, onConfirm }: P
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         placeholder="Explain why this change is needed"
+        disabled={busy}
       />
       {error ? <p className="mt-2 text-sm text-rose-700">{error}</p> : null}
     </Dialog>

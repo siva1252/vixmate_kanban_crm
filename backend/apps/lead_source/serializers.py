@@ -56,6 +56,8 @@ class LeadSourcePersonWriteSerializer(serializers.Serializer):
 class LeadSourcePersonUpdateSerializer(LeadSourcePersonWriteSerializer):
     display_name = serializers.CharField(max_length=255, min_length=2, required=False)
     reason = serializers.CharField(required=False, allow_blank=True, default="")
+    # When deactivating: true = unassign all linked leads; false = keep links.
+    unassign_leads = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         # Deactivate requires a reason (min 3 chars).

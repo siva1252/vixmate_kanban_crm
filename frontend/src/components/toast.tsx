@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { CheckCircle2, CircleAlert, X } from "lucide-react";
 
 type Toast = { id: string; message: string; tone?: "success" | "error" };
 
@@ -10,26 +11,55 @@ const ToastContext = createContext<{
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<Toast[]>([]);
+
+  const dismiss = useCallback((id: string) => {
+    setItems((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const push = useCallback((message: string, tone: Toast["tone"] = "success") => {
     const id = Math.random().toString(36).slice(2);
     setItems((prev) => [...prev, { id, message, tone }]);
-    setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 2800);
+    window.setTimeout(() => {
+      setItems((prev) => prev.filter((t) => t.id !== id));
+    }, 4200);
   }, []);
+
   const value = useMemo(() => ({ push }), [push]);
+
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed inset-x-0 top-4 z-[60] flex flex-col items-center gap-2 px-4 sm:items-end sm:px-6">
-        {items.map((t) => (
-          <div
-            key={t.id}
-            className={`pointer-events-auto w-full max-w-sm rounded-md px-4 py-2.5 text-sm text-white shadow-lg sm:w-auto ${
-              t.tone === "error" ? "bg-rose-700" : "bg-teal-800"
-            }`}
-          >
-            {t.message}
-          </div>
-        ))}
+      <div
+        className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[min(100%-2rem,22rem)] flex-col gap-2"
+        aria-live="polite"
+      >
+        {items.map((t) => {
+          const isError = t.tone === "error";
+          return (
+            <div
+              key={t.id}
+              role="status"
+              className={`pointer-events-auto flex items-start gap-3 rounded-lg px-3.5 py-3 text-sm text-white shadow-lg ${
+                isError ? "bg-rose-600" : "bg-emerald-600"
+              }`}
+            >
+              {isError ? (
+                <CircleAlert className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              ) : (
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              )}
+              <p className="min-w-0 flex-1 font-medium leading-snug">{t.message}</p>
+              <button
+                type="button"
+                aria-label="Dismiss"
+                className="shrink-0 rounded p-0.5 opacity-80 hover:opacity-100"
+                onClick={() => dismiss(t.id)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </ToastContext.Provider>
   );

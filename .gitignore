@@ -6,7 +6,7 @@ __pycache__/
 .Python
 .venv/
 venv/
-env/
+/env/
 *.egg-info/
 .pytest_cache/
 .coverage
@@ -26,6 +26,10 @@ staticfiles/
 .env.local
 .env.*.local
 !.env.example
+
+# Local-only ops docs (keep on machine; do not push)
+docs/SECURITY.md
+docs/domains.md
 
 # Node / Next.js
 node_modules/

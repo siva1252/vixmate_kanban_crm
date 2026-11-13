@@ -78,6 +78,12 @@ export async function logout() {
     // Always clear local session
   } finally {
     clearTokens();
+    try {
+      const { cacheInvalidate } = await import("@/lib/api-cache");
+      cacheInvalidate();
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -131,6 +137,18 @@ export async function confirmPasswordChange(otp: string, currentPassword: string
     method: "POST",
     body: {
       otp,
+      current_password: currentPassword,
+      new_password: newPassword,
+    },
+  });
+  return "Password updated.";
+}
+
+/** Signed-in password change — current + new only (no OTP). */
+export async function changePasswordDirect(currentPassword: string, newPassword: string) {
+  await apiRequest("/api/auth/password/change/", {
+    method: "POST",
+    body: {
       current_password: currentPassword,
       new_password: newPassword,
     },

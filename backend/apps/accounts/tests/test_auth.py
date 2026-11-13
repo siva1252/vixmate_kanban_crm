@@ -130,6 +130,43 @@ def test_token_refresh(api, member):
 
 
 @pytest.mark.django_db
+def test_refresh_rejected_after_deactivate(api, member, admin_user):
+    login = api.post(
+        "/api/auth/login/",
+        {"email": member.email, "password": "MemberPass123!"},
+        format="json",
+    )
+    refresh = login.data["data"]["refresh"]
+    access = login.data["data"]["access"]
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+    # Staff deactivates member → outstanding refresh tokens blacklisted
+    from apps.accounts.services.auth import deactivate_user
+
+    deactivate_user(actor=admin_user, user=member)
+    api.credentials()
+    response = api.post("/api/auth/token/refresh/", {"refresh": refresh}, format="json")
+    assert response.status_code in {
+        status.HTTP_400_BAD_REQUEST,
+        status.HTTP_401_UNAUTHORIZED,
+    }
+
+
+@pytest.mark.django_db
+def test_inactive_login_message_is_opaque(api, member):
+    member.is_active = False
+    member.save()
+    response = api.post(
+        "/api/auth/login/",
+        {"email": member.email, "password": "MemberPass123!"},
+        format="json",
+    )
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    # Must not reveal inactive vs wrong password
+    body = str(response.data).lower()
+    assert "inactive" not in body
+
+
+@pytest.mark.django_db
 def test_forgot_password_enumeration_safe(api, member):
     r1 = api.post("/api/auth/forgot-password/", {"email": member.email}, format="json")
     r2 = api.post(

@@ -93,6 +93,24 @@ class PasswordChangeConfirmSerializer(serializers.Serializer):
         return value
 
 
+class PasswordChangeDirectSerializer(serializers.Serializer):
+    """Logged-in password change — current + new only (no OTP)."""
+
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        return value
+
+    def validate(self, attrs):
+        if attrs["current_password"] == attrs["new_password"]:
+            raise serializers.ValidationError(
+                {"new_password": "New password must be different from the current password."}
+            )
+        return attrs
+
+
 class CreateUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)

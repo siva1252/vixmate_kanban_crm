@@ -29,8 +29,26 @@ def env_list(key: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-SECRET_KEY = env("DJANGO_SECRET_KEY", "insecure-dev-only-change-me")
+_INSECURE_SECRET_DEFAULTS = {
+    "insecure-dev-only-change-me",
+    "change-me-to-a-long-random-string",
+    "dev-local-vix-kanban-secret-key-change-in-prod",
+}
+
 DEBUG = env_bool("DJANGO_DEBUG", True)
+SECRET_KEY = env("DJANGO_SECRET_KEY") or (
+    "insecure-dev-only-change-me" if DEBUG else ""
+)
+
+if not SECRET_KEY or SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(SECRET_KEY) < 40:
+    if not DEBUG:
+        raise RuntimeError(
+            "DJANGO_SECRET_KEY must be a long random value when DJANGO_DEBUG=False. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
+    # Dev only: keep bootable, but never ship this default to a live server with DEBUG off.
+    SECRET_KEY = SECRET_KEY or "insecure-dev-only-change-me"
+
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 INSTALLED_APPS = [
@@ -156,6 +174,11 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_login": "10/min",
+        "auth_refresh": "30/min",
+        "auth_otp": "10/min",
+    },
     "DEFAULT_PAGINATION_CLASS": "common.pagination.StandardResultsSetPagination",
     "PAGE_SIZE": 25,
     "DEFAULT_SCHEMA_CLASS": "common.schema.ViximateAutoSchema",
@@ -164,7 +187,7 @@ REST_FRAMEWORK = {
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(
-        minutes=int(env("JWT_ACCESS_MINUTES", "60") or "60")
+        minutes=int(env("JWT_ACCESS_MINUTES", "30") or "30")
     ),
     "REFRESH_TOKEN_LIFETIME": timedelta(
         days=int(env("JWT_REFRESH_DAYS", "7") or "7")
@@ -232,9 +255,14 @@ SPECTACULAR_SETTINGS = {
 
 CORS_ALLOWED_ORIGINS = env_list(
     "DJANGO_CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000",
+    "http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:6018",
 )
 CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = env_list(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:6018",
+)
 
 EMAIL_BACKEND = env(
     "EMAIL_BACKEND",

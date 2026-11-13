@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
+import { cacheGet } from "@/lib/api-cache";
 import { cn } from "@/lib/utils";
 import { fetchTeamMembers } from "@/services/team";
 import type { TeamMember } from "@/types";
@@ -18,8 +19,10 @@ function initials(name: string) {
 }
 
 export default function TeamPage() {
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [members, setMembers] = useState<TeamMember[]>(
+    () => cacheGet<TeamMember[]>("team:list") ?? []
+  );
+  const [loading, setLoading] = useState(() => !cacheGet("team:list"));
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = members.find((m) => m.id === selectedId) ?? null;
@@ -27,19 +30,21 @@ export default function TeamPage() {
   useEffect(() => {
     const ac = new AbortController();
     void (async () => {
-      setLoading(true);
       setError("");
       try {
         const rows = await fetchTeamMembers(ac.signal);
-        setMembers(rows);
+        if (!ac.signal.aborted) setMembers(rows);
       } catch (err) {
-        if (ac.signal.aborted) return;
-        setError(err instanceof ApiError ? err.message : "Failed to load team");
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        if (members.length === 0) {
+          setError(err instanceof ApiError ? err.message : "Failed to load team");
+        }
       } finally {
         if (!ac.signal.aborted) setLoading(false);
       }
     })();
     return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -87,14 +92,14 @@ export default function TeamPage() {
 
       {!loading && members.length === 0 ? (
         <p className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
-          No team members found. Run seed_demo_users on the backend.
+          No team members found.
         </p>
       ) : null}
 
       {selected ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/40 p-0 sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
           <div className="absolute inset-0" onClick={() => setSelectedId(null)} aria-hidden />
-          <div className="relative z-10 flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-stone-200 bg-white shadow-xl dark:border-stone-800 dark:bg-stone-950 sm:rounded-2xl">
+          <div className="relative z-10 flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-xl dark:border-stone-800 dark:bg-stone-950">
             <div className="flex items-start justify-between gap-3 border-b border-stone-200 p-4 dark:border-stone-800">
               <div className="flex items-center gap-3">
                 <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-teal-900 text-sm font-semibold text-white">

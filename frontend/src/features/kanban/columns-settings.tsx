@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { GripVertical, Pencil, Trash2, X } from "lucide-react";
 import { ReasonDialog } from "@/components/reason-dialog";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,8 @@ type Props = {
 export function ColumnsSettings({ open, onClose, onChanged }: Props) {
   const { push } = useToast();
   const [tick, setTick] = useState(0);
-  const stages = useMemo(() => sortedStages(), [tick, open]);
+  void tick;
+  const stages = sortedStages();
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(COLUMN_COLORS[1]);
   const [editId, setEditId] = useState<string | null>(null);
@@ -104,9 +105,9 @@ export function ColumnsSettings({ open, onClose, onChanged }: Props) {
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex justify-end bg-stone-950/40">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4">
         <button type="button" className="absolute inset-0" aria-label="Close columns panel" onClick={onClose} />
-        <aside className="relative z-10 flex h-full w-full max-w-md flex-col border-l border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950">
+        <aside className="relative z-10 flex max-h-[90dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950">
           <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3 dark:border-stone-800">
             <div>
               <h2 className="font-display text-xl">Board columns</h2>

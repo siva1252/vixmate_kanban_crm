@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -e
+# Block direct pushes to protected branches — use feature branches + merge/PR.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master|refs/heads/dev)
+      echo "pre-push: direct push to ${remote_ref#refs/heads/} is blocked. Push a feature branch instead."
+      exit 1
+      ;;
+  esac
+done

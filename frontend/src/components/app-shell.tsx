@@ -21,7 +21,8 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getSession, logout } from "@/mock-services/auth";
+import { clearTokens, getAccessToken } from "@/lib/api";
+import { getSession, logout, refreshSession } from "@/mock-services/auth";
 import { cn } from "@/lib/utils";
 
 function BrandMark({ collapsed = false }: { collapsed?: boolean }) {
@@ -62,27 +63,81 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { theme, setTheme } = useTheme();
-  const [ready, setReady] = useState(false);
   const [name, setName] = useState("");
+  const [authed, setAuthed] = useState<boolean | null>(null);
   const [desktopOpen, setDesktopOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    const session = getSession();
-    if (!session) {
-      router.replace("/login");
-      return;
+    let cancelled = false;
+    void (async () => {
+      // Require a real access token + live /me — not forgeable localStorage JSON alone.
+      if (!getAccessToken()) {
+        clearTokens();
+        if (!cancelled) {
+          setAuthed(false);
+          router.replace("/login");
+        }
+        return;
+      }
+      const live = await refreshSession();
+      if (cancelled) return;
+      if (!live) {
+        setAuthed(false);
+        router.replace("/login");
+        return;
+      }
+      setName(live.fullName || getSession()?.fullName || "");
+      setAuthed(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  // Warm route chunks + API cache so tab clicks skip loaders when possible.
+  useEffect(() => {
+    if (authed !== true) return;
+    for (const link of links) {
+      try {
+        router.prefetch(link.href);
+      } catch {
+        // ignore
+      }
     }
-    setName(session.fullName);
-    setReady(true);
-  }, [router, pathname]);
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const [{ fetchCrmConfig }, { fetchTeamMembers }, { fetchKanbanBoard }, { listClients }, { fetchActivityLogs }, { fetchLeadSourcePeople }] =
+          await Promise.all([
+            import("@/services/configuration"),
+            import("@/services/team"),
+            import("@/services/kanban"),
+            import("@/services/clients"),
+            import("@/services/activity"),
+            import("@/services/lead-source"),
+          ]);
+        await Promise.allSettled([
+          fetchCrmConfig(ac.signal),
+          fetchTeamMembers(ac.signal),
+          fetchKanbanBoard({}, ac.signal),
+          listClients({}, ac.signal),
+          fetchActivityLogs({ page_size: 100 }, ac.signal),
+          fetchLeadSourcePeople({ status: "active" }, ac.signal),
+        ]);
+      } catch {
+        // warm-up is best-effort
+      }
+    })();
+    return () => ac.abort();
+  }, [authed, router]);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
-  if (!ready) {
-    return <div className="grid h-dvh place-items-center text-stone-500">Loading…</div>;
+  if (authed === false) {
+    return <div className="grid h-dvh place-items-center text-stone-500">Redirecting…</div>;
   }
 
   const NavLinks = ({ collapsed = false }: { collapsed?: boolean }) => (
@@ -94,6 +149,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Link
             key={link.href}
             href={link.href}
+            prefetch
             title={link.label}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
@@ -114,7 +170,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-dvh overflow-hidden bg-[radial-gradient(circle_at_top_left,#d9efe8,transparent_40%),linear-gradient(180deg,#f7f4ef,#eef2f0)] text-stone-900 dark:bg-[radial-gradient(circle_at_top_left,#0f2f2a,transparent_35%),linear-gradient(180deg,#121212,#1a1f1d)] dark:text-stone-100">
       <div className="flex h-full w-full">
-        {/* Desktop sidebar */}
         <aside
           className={cn(
             "hidden h-full shrink-0 flex-col border-r border-stone-200/80 bg-white/80 backdrop-blur transition-all duration-200 dark:border-stone-800 dark:bg-stone-950/70 md:flex",
@@ -143,7 +198,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        {/* Mobile drawer */}
         {mobileOpen ? (
           <div className="fixed inset-0 z-50 md:hidden">
             <button
@@ -188,7 +242,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </span>
               <div className="min-w-0">
                 <p className="text-xs text-stone-500 sm:text-sm">Signed in as</p>
-                <p className="truncate font-medium">{name}</p>
+                <p className="truncate font-medium">{name || "…"}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -215,7 +269,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Button>
             </div>
           </header>
-          <main className="min-h-0 flex-1 overflow-auto">{children}</main>
+          <main className="min-h-0 flex-1 overflow-auto">
+            {authed === null ? (
+              <div className="grid h-full place-items-center text-sm text-stone-500">Loading…</div>
+            ) : (
+              children
+            )}
+          </main>
         </div>
       </div>
     </div>
