@@ -80,10 +80,21 @@ curl -fsS http://127.0.0.1:6018/
 docker exec vix-leads-db pg_isready -U postgres
 ```
 
+## Seeding (backend entrypoint)
+
+On each backend container start (after migrate), if `SEED_ON_STARTUP=1` (default):
+
+- `seed_configuration` — Kanban stages, lead sources, services, industries, responsibilities
+- `seed_demo_users` — 5 CRM admins + `admin@viximate.local` (password `Viximate@high5`)
+
+No dummy leads are created. Set `SEED_ON_STARTUP=0` in `vix-leads-backend-env` after go-live if you do not want seed passwords reset on restart.
+
+Team emails: see `docs/domains.md`.
+
 ## Go-live
 
-1. Secret files filled (`DEBUG=False`, strong secret, strong `POSTGRES_PASSWORD`)
+1. Secret files filled (`DEBUG=False`, strong secret, strong `POSTGRES_PASSWORD`, `SEED_ON_STARTUP=1`)
 2. DNS / hosts for the three domains → this server
 3. nginx from `deployment/nginx/nginx.conf`
 4. Run pipeline; smoke green
-5. Change seed passwords after first login
+5. Login with a seed user; change passwords; then set `SEED_ON_STARTUP=0` and redeploy

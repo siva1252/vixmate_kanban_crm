@@ -1,4 +1,4 @@
-"""Run full local seed: configuration → demo users → demo leads."""
+"""Run full seed: configuration → team users (no dummy leads)."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from apps.configuration.models import Industry, LeadSource, Service
 
 
 class Command(BaseCommand):
-    help = "Seed configuration, demo users, and demo leads for Swagger testing."
+    help = "Seed configuration + team users for local/Swagger/prod bootstrap."
 
     def handle(self, *args, **options):
         call_command("seed_configuration")
         call_command("seed_demo_users")
-        # Demo leads / sample Lead Source people are optional — do not invent dummy CRM data here.
+        # Demo leads / sample Lead Source people are disabled — create real leads via CRM.
 
         source = LeadSource.objects.filter(is_active=True).order_by("display_order").first()
         service = Service.objects.filter(is_active=True).order_by("display_order").first()
