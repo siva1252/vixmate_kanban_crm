@@ -6,8 +6,9 @@
 |---------|-----------|--------|
 | Frontend | **6018** | `leads.internal.viximate.com`, `www.leads.internal.viximate.com` |
 | Backend | **6019** | `leads-api.internal.viximate.com` |
+| Postgres | *(Docker only)* | container `vix-leads-db`, network alias `db` |
 
-Database is **local Postgres on the Jenkins host** (`host.docker.internal` from containers).
+Postgres runs **inside Docker** on `vix-leads-net`. The backend reaches it as `POSTGRES_HOST=db` (not host Postgres / `172.17.0.1`).
 
 ## Env credentials (Secret file) — set these in Jenkins
 
@@ -40,9 +41,9 @@ Database is **local Postgres on the Jenkins host** (`host.docker.internal` from 
 |-----|------------|
 | `DJANGO_SECRET_KEY` | long random (not the local one) |
 | `DJANGO_DEBUG` | `False` |
-| `DJANGO_ALLOWED_HOSTS` | `leads-api.internal.viximate.com,localhost,127.0.0.1` |
-| `POSTGRES_HOST` | `host.docker.internal` |
-| `POSTGRES_DB` / `USER` / `PASSWORD` | your host Postgres |
+| `DJANGO_ALLOWED_HOSTS` | `leads-api.internal.viximate.com,localhost,127.0.0.1,backend` |
+| `POSTGRES_HOST` | `db` (pipeline also forces this) |
+| `POSTGRES_DB` / `USER` / `PASSWORD` | shared with the `vix-leads-db` container |
 | `MEDIA_ROOT` / `STATIC_ROOT` | `media` / `staticfiles` |
 
 **Frontend (`vix-leads-frontend-env`)**
@@ -53,24 +54,36 @@ Database is **local Postgres on the Jenkins host** (`host.docker.internal` from 
 
 ## Pipeline
 
-**One fullstack job** — each run builds + deploys backend then frontend.
+**One fullstack job** — each run starts Postgres (if needed), builds + deploys backend, then frontend.
 
 - Network: `vix-leads-net`
-- Images: `vix-leads-frontend`, `vix-leads-backend`
+- Containers: `vix-leads-db` (alias `db`), `vix-leads-backend`, `vix-leads-frontend`
+- Volumes: `vix-leads-postgres` (DB data), `vix-leads-media`
 - Enable **GitHub hook trigger for GITScm polling** (webhook: `https://jenkins.viximate.com/github-webhook/`)
+
+### Password / volume note
+
+`POSTGRES_PASSWORD` is applied only when the `vix-leads-postgres` volume is **first** created. Changing the password later in the secret file without resetting the volume will fail auth. To reset DB data (destructive):
+
+```bash
+docker rm -f vix-leads-db
+docker volume rm vix-leads-postgres
+```
+
+Then re-run the pipeline.
 
 ## Smoke
 
 ```bash
 curl -fsS http://127.0.0.1:6019/api/health/
 curl -fsS http://127.0.0.1:6018/
+docker exec vix-leads-db pg_isready -U postgres
 ```
 
 ## Go-live
 
-1. Secret files filled (`DEBUG=False`, strong secret, real DB password)
-2. Postgres on host allows Docker (`pg_hba` / listen)
-3. DNS / hosts for the three domains → this server
-4. nginx from `deployment/nginx/nginx.conf`
-5. Run pipeline; smoke green
-6. Change seed passwords after first login
+1. Secret files filled (`DEBUG=False`, strong secret, strong `POSTGRES_PASSWORD`)
+2. DNS / hosts for the three domains → this server
+3. nginx from `deployment/nginx/nginx.conf`
+4. Run pipeline; smoke green
+5. Change seed passwords after first login
