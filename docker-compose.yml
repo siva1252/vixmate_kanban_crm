@@ -1,7 +1,22 @@
 # Local / lab compose. Jenkins uses the Jenkinsfile + Docker run directly.
-# Ports match docs/domains.md: FE 6018, BE 6019. Postgres stays on the host by default.
+# Ports match docs/domains.md: FE 6018, BE 6019. Postgres runs in Docker (alias: db).
 
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vix_kanban}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-vix_kanban}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -9,17 +24,15 @@ services:
     env_file:
       - backend/.env
     environment:
-      # Override only if you also start the optional `db` service below.
-      # POSTGRES_HOST: db
-      # POSTGRES_PORT: 5432
-      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
     ports:
       - "6019:8000"
     volumes:
       - media_data:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -34,19 +47,6 @@ services:
       - backend
     restart: unless-stopped
 
-  # Optional local Postgres if you do not already have one on the host.
-  # Uncomment and set POSTGRES_HOST=db in backend/.env when using this.
-  # db:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_DB: ${POSTGRES_DB:-vix_kanban}
-  #     POSTGRES_USER: ${POSTGRES_USER:-postgres}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-
 volumes:
   media_data:
-  # postgres_data:
+  postgres_data:
