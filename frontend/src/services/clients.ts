@@ -1,5 +1,6 @@
 import { apiRequest } from "@/lib/api";
 import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
+import { notifyDataChanged } from "@/lib/data-events";
 import type { Client } from "@/types";
 import { invalidateActivityCache } from "@/services/activity";
 
@@ -146,7 +147,7 @@ function toUpdateBody(input: UpdateClientInput, reason: string) {
   return body;
 }
 
-function clientsCacheKey(filters: ClientFilters = {}) {
+export function clientsCacheKey(filters: ClientFilters = {}) {
   return `clients:${filters.search || ""}:${filters.stageId || ""}:${filters.sourceId || ""}:${filters.serviceId || ""}:${filters.dateFrom || ""}:${filters.dateTo || ""}:${filters.firstCallCompleted ?? ""}`;
 }
 
@@ -155,8 +156,11 @@ export function invalidateClientsCache() {
 }
 
 function bumpCaches() {
+  // Keep board + lists in sync after create/update/delete (same as drag move).
+  cacheInvalidate("kanban:");
   invalidateClientsCache();
   invalidateActivityCache();
+  notifyDataChanged();
 }
 
 export async function listClients(filters: ClientFilters = {}, signal?: AbortSignal, opts?: { force?: boolean }) {

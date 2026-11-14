@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearTokens, getAccessToken } from "@/lib/api";
+import { startCrmRealtime } from "@/lib/realtime";
 import { getSession, logout, refreshSession } from "@/mock-services/auth";
 import { cn } from "@/lib/utils";
 
@@ -132,9 +133,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => ac.abort();
   }, [authed, router]);
 
+  // Live sync: when any teammate creates/updates/deletes, open boards refresh without tab change.
+  useEffect(() => {
+    if (authed !== true) return;
+    const live = startCrmRealtime();
+    return () => live.stop();
+  }, [authed]);
+
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
+
+  const onSignOut = () => {
+    void (async () => {
+      await logout();
+      router.replace("/login");
+    })();
+  };
 
   if (authed === false) {
     return <div className="grid h-dvh place-items-center text-stone-500">Redirecting…</div>;
@@ -167,6 +182,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </nav>
   );
 
+  const SignOutButton = ({ collapsed = false }: { collapsed?: boolean }) => (
+    <button
+      type="button"
+      title="Sign out"
+      onClick={onSignOut}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-700 transition hover:bg-rose-50 hover:text-rose-800 dark:text-stone-300 dark:hover:bg-rose-950/40 dark:hover:text-rose-200",
+        collapsed && "justify-center px-2"
+      )}
+    >
+      <LogOut className="h-4 w-4 shrink-0" />
+      {!collapsed ? <span>Sign out</span> : null}
+    </button>
+  );
+
   return (
     <div className="h-dvh overflow-hidden bg-[radial-gradient(circle_at_top_left,#d9efe8,transparent_40%),linear-gradient(180deg,#f7f4ef,#eef2f0)] text-stone-900 dark:bg-[radial-gradient(circle_at_top_left,#0f2f2a,transparent_35%),linear-gradient(180deg,#121212,#1a1f1d)] dark:text-stone-100">
       <div className="flex h-full w-full">
@@ -193,8 +223,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {desktopOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
             </Button>
           </div>
-          <div className="flex-1 overflow-y-auto p-3">
-            <NavLinks collapsed={!desktopOpen} />
+          <div className="flex min-h-0 flex-1 flex-col p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <NavLinks collapsed={!desktopOpen} />
+            </div>
+            <div className="mt-3 shrink-0 border-t border-stone-200/80 pt-3 dark:border-stone-800">
+              <SignOutButton collapsed={!desktopOpen} />
+            </div>
           </div>
         </aside>
 
@@ -212,8 +247,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              <div className="flex-1 overflow-y-auto p-3">
-                <NavLinks />
+              <div className="flex min-h-0 flex-1 flex-col p-3">
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <NavLinks />
+                </div>
+                <div className="mt-3 shrink-0 border-t border-stone-200 pt-3 dark:border-stone-800">
+                  <SignOutButton />
+                </div>
               </div>
             </aside>
           </div>

@@ -12,6 +12,7 @@ import {
 } from "@/lib/activity";
 import { ApiError } from "@/lib/api";
 import { cacheGet } from "@/lib/api-cache";
+import { DATA_CHANGED_EVENT } from "@/lib/data-events";
 import { formatDateTime } from "@/lib/utils";
 import { fetchActivityLogs, type ActivityLogRow } from "@/services/activity";
 import { fetchTeamMembers } from "@/services/team";
@@ -22,6 +23,7 @@ export default function ActivityPage() {
   const [actorId, setActorId] = useState("");
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
+  const [tick, setTick] = useState(0);
   const [rows, setRows] = useState<ActivityLogRow[]>(
     () => cacheGet<ActivityLogRow[]>("activity::::::1:100") ?? []
   );
@@ -35,6 +37,12 @@ export default function ActivityPage() {
     const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => window.clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    const refresh = () => setTick((t) => t + 1);
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, []);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -55,7 +63,8 @@ export default function ActivityPage() {
           entity_type: entityType || undefined,
           page_size: 100,
         },
-        signal
+        signal,
+        { force: true }
       );
       if (signal?.aborted) return;
       setRows(Array.isArray(data) ? data : []);
@@ -71,7 +80,7 @@ export default function ActivityPage() {
     const ac = new AbortController();
     void load(ac.signal);
     return () => ac.abort();
-  }, [load]);
+  }, [load, tick]);
 
   const actionOptions = useMemo(() => {
     const known = new Map<string, string>(ACTIVITY_ACTIONS.map((a) => [a.value, a.label]));

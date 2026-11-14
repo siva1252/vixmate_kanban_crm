@@ -1,7 +1,6 @@
 import { apiRequest } from "@/lib/api";
 import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
-import { mapClient, moveClientStage, invalidateClientsCache } from "@/services/clients";
-import { invalidateActivityCache } from "@/services/activity";
+import { mapClient, moveClientStage } from "@/services/clients";
 import type { Client, LeadStage } from "@/types";
 
 type ApiStage = {
@@ -69,11 +68,8 @@ export async function fetchKanbanBoard(
 }
 
 export async function moveCard(clientId: string, toStageId: string) {
-  const client = await moveClientStage(clientId, toStageId);
-  cacheInvalidate("kanban:");
-  invalidateClientsCache();
-  invalidateActivityCache();
-  return client;
+  // moveClientStage → bumpCaches already clears kanban/clients/activity + notifies UI
+  return moveClientStage(clientId, toStageId);
 }
 
 export function invalidateKanbanCache() {

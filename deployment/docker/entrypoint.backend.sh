@@ -20,4 +20,5 @@ else
   echo "=== seed skipped (SEED_ON_STARTUP=${SEED_ON_STARTUP}) ==="
 fi
 
-exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120
+# Daphne ASGI so HTTP + WebSockets share one process (live CRM sync for all open browsers).
+exec daphne -b 0.0.0.0 -p 8000 --proxy-headers config.asgi:application

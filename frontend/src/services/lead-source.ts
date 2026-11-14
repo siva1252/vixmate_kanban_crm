@@ -1,5 +1,6 @@
 import { apiRequest } from "@/lib/api";
 import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
+import { notifyDataChanged } from "@/lib/data-events";
 import type { LeadSourcePerson } from "@/types";
 
 type ApiPerson = {
@@ -71,6 +72,7 @@ export async function fetchLeadSourcePeople(
 
 export function invalidateLeadSourceCache() {
   cacheInvalidate("lead-source:");
+  notifyDataChanged();
 }
 
 export async function createLeadSourcePerson(body: {

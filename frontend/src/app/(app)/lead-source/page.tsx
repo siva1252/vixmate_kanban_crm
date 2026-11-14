@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/toast";
 import { ApiError } from "@/lib/api";
 import { cacheGet } from "@/lib/api-cache";
+import { DATA_CHANGED_EVENT } from "@/lib/data-events";
 import { cn } from "@/lib/utils";
 import type { LeadSourcePerson } from "@/types";
 import {
@@ -144,7 +145,8 @@ export default function LeadSourcePage() {
           has_leads: hasLeadsQuery,
           client: leadIdFilter || undefined,
         },
-        signal
+        signal,
+        { force: true }
       );
       if (signal?.aborted) return;
       const unfilteredLen = rows.length;
@@ -158,6 +160,14 @@ export default function LeadSourcePage() {
       if (!signal?.aborted) setListLoading(false);
     }
   }, [debouncedSearch, statusQuery, hasLeadsQuery, leadIdFilter, personIdFilter, push]);
+
+  useEffect(() => {
+    const refresh = () => {
+      void reloadList();
+    };
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, [reloadList]);
 
   useEffect(() => {
     const ac = new AbortController();

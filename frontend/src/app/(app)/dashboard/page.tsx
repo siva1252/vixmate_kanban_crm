@@ -12,16 +12,20 @@ import {
 } from "recharts";
 import { ApiError } from "@/lib/api";
 import { cacheGet } from "@/lib/api-cache";
+import { DATA_CHANGED_EVENT } from "@/lib/data-events";
 import { formatDateTime } from "@/lib/utils";
 import { fetchActivityLogs, type ActivityLogRow } from "@/services/activity";
-import { listClients } from "@/services/clients";
+import { clientsCacheKey, listClients } from "@/services/clients";
 import { fetchCrmConfig, type CrmConfig } from "@/services/configuration";
 import { actionLabel } from "@/lib/activity";
 import type { Client } from "@/types";
 
+const EMPTY_CLIENTS_KEY = clientsCacheKey({});
+
 export default function DashboardPage() {
+  const [tick, setTick] = useState(0);
   const [clients, setClients] = useState<Client[]>(
-    () => cacheGet<Client[]>("clients::::::::") ?? []
+    () => cacheGet<Client[]>(EMPTY_CLIENTS_KEY) ?? []
   );
   const [config, setConfig] = useState<CrmConfig | null>(() => cacheGet<CrmConfig>("config:bundle"));
   const [activities, setActivities] = useState<ActivityLogRow[]>(
@@ -31,14 +35,20 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const refresh = () => setTick((t) => t + 1);
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, []);
+
+  useEffect(() => {
     const ac = new AbortController();
     void (async () => {
       setError("");
       try {
         const [rows, cfg, logs] = await Promise.all([
-          listClients({}, ac.signal),
+          listClients({}, ac.signal, { force: true }),
           fetchCrmConfig(ac.signal),
-          fetchActivityLogs({ page_size: 8 }, ac.signal),
+          fetchActivityLogs({ page_size: 8 }, ac.signal, { force: true }),
         ]);
         if (ac.signal.aborted) return;
         setClients(rows);
@@ -52,7 +62,7 @@ export default function DashboardPage() {
       }
     })();
     return () => ac.abort();
-  }, []);
+  }, [tick]);
 
   const stageData = useMemo(() => {
     const stages = config?.stages ?? [];

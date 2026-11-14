@@ -1,5 +1,6 @@
 import { apiRequest } from "@/lib/api";
 import { cacheGet, cacheInvalidate, cacheSet } from "@/lib/api-cache";
+import { notifyDataChanged } from "@/lib/data-events";
 import { invalidateActivityCache } from "@/services/activity";
 import type { LeadWorking } from "@/types";
 
@@ -81,6 +82,7 @@ export async function assignWorking(body: {
   });
   invalidateWorkingCache(body.client);
   invalidateActivityCache();
+  notifyDataChanged();
   return mapWorking(row);
 }
 
@@ -95,6 +97,7 @@ export async function updateWorking(
   });
   invalidateWorkingCache(clientId || String(row.client));
   invalidateActivityCache();
+  notifyDataChanged();
   return mapWorking(row);
 }
 
@@ -106,4 +109,5 @@ export async function removeWorking(workingId: string, reason: string, clientId?
   if (clientId) invalidateWorkingCache(clientId);
   else invalidateWorkingCache();
   invalidateActivityCache();
+  notifyDataChanged();
 }

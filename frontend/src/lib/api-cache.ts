@@ -1,43 +1,31 @@
-/** In-memory + sessionStorage GET cache so revisiting tabs skips loaders/network. */
+/** In-memory GET cache. Not persisted — sessionStorage was keeping stale boards/lists after create/delete. */
 
 type Entry<T> = { at: number; data: T };
 
 const store = new Map<string, Entry<unknown>>();
-const DEFAULT_TTL_MS = 5 * 60_000; // 5 minutes
+const DEFAULT_TTL_MS = 60_000; // 1 minute — warm nav only; mutations invalidate + pages force-refetch
 const STORAGE_PREFIX = "vix.cache.";
+
+// One-time cleanup of old sessionStorage cache from previous builds.
+if (typeof window !== "undefined") {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const k = sessionStorage.key(i);
+      if (k?.startsWith(STORAGE_PREFIX)) keys.push(k);
+    }
+    for (const k of keys) sessionStorage.removeItem(k);
+  } catch {
+    // ignore
+  }
+}
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof sessionStorage !== "undefined";
 }
 
-function readStorage<T>(key: string, ttlMs: number): T | null {
-  if (!canUseStorage()) return null;
-  try {
-    const raw = sessionStorage.getItem(STORAGE_PREFIX + key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Entry<T>;
-    if (!parsed || typeof parsed.at !== "number") return null;
-    if (Date.now() - parsed.at > ttlMs) {
-      sessionStorage.removeItem(STORAGE_PREFIX + key);
-      return null;
-    }
-    store.set(key, parsed);
-    return parsed.data;
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage<T>(key: string, entry: Entry<T>) {
-  if (!canUseStorage()) return;
-  try {
-    sessionStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(entry));
-  } catch {
-    // quota / private mode — memory cache still works
-  }
-}
-
-function clearStorage(prefix?: string) {
+/** Drop legacy sessionStorage entries from older builds. */
+function clearLegacyStorage(prefix?: string) {
   if (!canUseStorage()) return;
   try {
     const keys: string[] = [];
@@ -55,32 +43,28 @@ function clearStorage(prefix?: string) {
 
 export function cacheGet<T>(key: string, ttlMs = DEFAULT_TTL_MS): T | null {
   const hit = store.get(key);
-  if (hit) {
-    if (Date.now() - hit.at > ttlMs) {
-      store.delete(key);
-    } else {
-      return hit.data as T;
-    }
+  if (!hit) return null;
+  if (Date.now() - hit.at > ttlMs) {
+    store.delete(key);
+    return null;
   }
-  return readStorage<T>(key, ttlMs);
+  return hit.data as T;
 }
 
 export function cacheSet<T>(key: string, data: T) {
-  const entry: Entry<T> = { at: Date.now(), data };
-  store.set(key, entry);
-  writeStorage(key, entry);
+  store.set(key, { at: Date.now(), data });
 }
 
 export function cacheInvalidate(prefix?: string) {
   if (!prefix) {
     store.clear();
-    clearStorage();
+    clearLegacyStorage();
     return;
   }
   for (const key of [...store.keys()]) {
     if (key.startsWith(prefix)) store.delete(key);
   }
-  clearStorage(prefix);
+  clearLegacyStorage(prefix);
 }
 
 /** True when fresh cached data exists (for skipping full-page loaders). */

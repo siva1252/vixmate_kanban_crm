@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { ColumnsSettings } from "@/features/kanban/columns-settings";
 import { ApiError } from "@/lib/api";
 import { cacheGet } from "@/lib/api-cache";
+import { DATA_CHANGED_EVENT } from "@/lib/data-events";
 import { cn, formatDate } from "@/lib/utils";
 import { fetchCrmConfig, type CrmConfig } from "@/services/configuration";
 import { fetchKanbanBoard, moveCard, type KanbanColumn } from "@/services/kanban";
@@ -172,6 +173,12 @@ export function KanbanBoard() {
   }, [search]);
 
   useEffect(() => {
+    const refresh = () => setTick((t) => t + 1);
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, []);
+
+  useEffect(() => {
     const ac = new AbortController();
     void fetchCrmConfig(ac.signal)
       .then((c) => {
@@ -194,7 +201,7 @@ export function KanbanBoard() {
             serviceId: serviceId || undefined,
           },
           ac.signal,
-          { force: tick > 0 }
+          { force: true }
         );
         if (!ac.signal.aborted) setBoard(rows);
       } catch (err) {

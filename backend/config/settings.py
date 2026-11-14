@@ -52,6 +52,7 @@ if not SECRET_KEY or SECRET_KEY in _INSECURE_SECRET_DEFAULTS or len(SECRET_KEY) 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -59,6 +60,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     # Third party
+    "channels",
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
@@ -81,6 +83,7 @@ INSTALLED_APPS = [
     "apps.audit",
     "apps.custom_fields",
     "apps.configuration",
+    "apps.realtime",
 ]
 
 MIDDLEWARE = [
@@ -115,6 +118,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
+
+# Live board sync (WebSockets). In-memory is fine for single Daphne process (Docker/Jenkins).
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    }
+}
 
 DATABASES = {
     "default": {
