@@ -5,9 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { cacheGet } from "@/lib/api-cache";
-import { listClients } from "@/services/clients";
+import { DATA_CHANGED_EVENT } from "@/lib/data-events";
+import { clientsCacheKey, listClients } from "@/services/clients";
 import { fetchCrmConfig, type CrmConfig } from "@/services/configuration";
 import type { Client } from "@/types";
+
+const EMPTY_CLIENTS_KEY = clientsCacheKey({});
 
 export default function LeadsPage() {
   const [search, setSearch] = useState("");
@@ -15,17 +18,24 @@ export default function LeadsPage() {
   const [stageId, setStageId] = useState("");
   const [sourceId, setSourceId] = useState("");
   const [serviceId, setServiceId] = useState("");
+  const [tick, setTick] = useState(0);
   const [clients, setClients] = useState<Client[]>(
-    () => cacheGet<Client[]>("clients::::::::") ?? []
+    () => cacheGet<Client[]>(EMPTY_CLIENTS_KEY) ?? []
   );
   const [config, setConfig] = useState<CrmConfig | null>(() => cacheGet<CrmConfig>("config:bundle"));
-  const [loading, setLoading] = useState(() => !cacheGet("clients::::::::"));
+  const [loading, setLoading] = useState(() => !cacheGet(EMPTY_CLIENTS_KEY));
   const [error, setError] = useState("");
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => window.clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    const refresh = () => setTick((t) => t + 1);
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, []);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -52,7 +62,8 @@ export default function LeadsPage() {
             sourceId: sourceId || undefined,
             serviceId: serviceId || undefined,
           },
-          ac.signal
+          ac.signal,
+          { force: true }
         );
         if (!ac.signal.aborted) setClients(rows);
       } catch (err) {
@@ -65,7 +76,7 @@ export default function LeadsPage() {
     })();
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, stageId, sourceId, serviceId]);
+  }, [debouncedSearch, stageId, sourceId, serviceId, tick]);
 
   const stageName = useMemo(() => {
     const map = new Map((config?.stages ?? []).map((s) => [s.id, s.name]));

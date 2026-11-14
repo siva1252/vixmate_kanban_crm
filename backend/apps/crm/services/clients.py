@@ -9,6 +9,7 @@ from rest_framework.exceptions import ValidationError
 from apps.audit.services import write_audit_log
 from apps.calls.models import CallHistory, CallOutcome
 from apps.crm.models import Client, LeadStage, LeadStageHistory
+from apps.realtime.broadcast import schedule_crm_broadcast
 from common.validators import require_reason
 
 
@@ -146,6 +147,12 @@ def create_client(*, actor, data: dict, request=None) -> Client:
         description=f"Created lead {client.client_name}",
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="client",
+        action="created",
+        entity_id=client.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return client
 
 
@@ -212,6 +219,12 @@ def update_client(*, actor, client: Client, data: dict, reason: str = "", reques
         description=f"Updated client {client.client_name}",
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="client",
+        action="updated",
+        entity_id=client.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return client
 
 
@@ -265,6 +278,12 @@ def mark_first_call_complete(*, actor, client: Client, data: dict, request=None)
         description=f"First call completed for {client.client_name}",
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="client",
+        action="updated",
+        entity_id=client.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return client
 
 
@@ -292,6 +311,12 @@ def move_client_stage(*, actor, client: Client, new_stage: LeadStage, request=No
         description=f"Stage changed {previous} -> {new_stage}",
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="client",
+        action="stage_changed",
+        entity_id=client.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return client
 
 
@@ -313,6 +338,12 @@ def soft_delete_client(*, actor, client: Client, reason: str, request=None) -> C
         description=f"Deleted lead {client_name}",
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="client",
+        action="deleted",
+        entity_id=client.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return client
 
 
@@ -329,5 +360,11 @@ def restore_client(*, actor, client: Client, request=None) -> Client:
         new_values={"is_deleted": False},
         description=f"Restored client {client.client_name}",
         request=request,
+    )
+    schedule_crm_broadcast(
+        entity="client",
+        action="restored",
+        entity_id=client.id,
+        actor_id=getattr(actor, "id", None),
     )
     return client

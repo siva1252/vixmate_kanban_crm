@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.assignments.models import LeadWorking
 from apps.audit.services import write_audit_log
+from apps.realtime.broadcast import schedule_crm_broadcast
 from common.validators import require_reason
 
 
@@ -39,6 +40,12 @@ def assign_working(*, actor, client, team_member, work_note: str, request=None) 
         },
         description=f"Assigned {team_member.display_name} to work on {client.client_name}",
         request=request,
+    )
+    schedule_crm_broadcast(
+        entity="working",
+        action="assigned",
+        entity_id=row.id,
+        actor_id=getattr(actor, "id", None),
     )
     return row
 
@@ -83,6 +90,12 @@ def update_working(*, actor, row: LeadWorking, data: dict, reason: str, request=
         description=f"Updated working assignment on {row.client.client_name}",
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="working",
+        action="updated",
+        entity_id=row.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return row
 
 
@@ -107,5 +120,11 @@ def remove_working(*, actor, row: LeadWorking, reason: str, request=None) -> Lea
         reason=cleaned,
         description=f"Removed {old['team_member_name']} from working on {row.client.client_name}",
         request=request,
+    )
+    schedule_crm_broadcast(
+        entity="working",
+        action="removed",
+        entity_id=row.id,
+        actor_id=getattr(actor, "id", None),
     )
     return row

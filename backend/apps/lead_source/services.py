@@ -9,6 +9,7 @@ from rest_framework.exceptions import ValidationError
 from apps.audit.services import write_audit_log
 from apps.crm.models import Client
 from apps.lead_source.models import LeadSourceAttribution, LeadSourcePerson
+from apps.realtime.broadcast import schedule_crm_broadcast
 
 
 @transaction.atomic
@@ -39,6 +40,12 @@ def create_person(*, actor, data: dict, request=None) -> LeadSourcePerson:
             "is_active": person.is_active,
         },
         request=request,
+    )
+    schedule_crm_broadcast(
+        entity="lead_source",
+        action="created",
+        entity_id=person.id,
+        actor_id=getattr(actor, "id", None),
     )
     return person
 
@@ -124,6 +131,12 @@ def update_person(*, actor, person: LeadSourcePerson, data: dict, request=None) 
         },
         reason=reason,
         request=request,
+    )
+    schedule_crm_broadcast(
+        entity="lead_source",
+        action="updated",
+        entity_id=person.id,
+        actor_id=getattr(actor, "id", None),
     )
     return person
 
@@ -212,6 +225,12 @@ def assign_lead_to_person(
         },
         request=request,
     )
+    schedule_crm_broadcast(
+        entity="lead_source",
+        action="assigned",
+        entity_id=row.id,
+        actor_id=getattr(actor, "id", None),
+    )
     return row
 
 
@@ -270,4 +289,10 @@ def remove_attribution(
         },
         reason=cleaned_reason,
         request=request,
+    )
+    schedule_crm_broadcast(
+        entity="lead_source",
+        action="unassigned",
+        entity_id=row.id,
+        actor_id=getattr(actor, "id", None),
     )
